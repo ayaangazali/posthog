@@ -999,6 +999,7 @@ export type ActivityLogListParams = {
      * * `Metric` - Metric
      * * `TableCertification` - TableCertification
      * * `Billing` - Billing
+     * * `Loop` - Loop
      * @minLength 1
      */
     scope?: ActivityLogListScope
@@ -1086,6 +1087,7 @@ export const ActivityLogListScope = {
     Metric: 'Metric',
     TableCertification: 'TableCertification',
     Billing: 'Billing',
+    Loop: 'Loop',
 } as const
 
 /**
@@ -1160,6 +1162,7 @@ export const ActivityLogListScope = {
  * * `Metric` - Metric
  * * `TableCertification` - TableCertification
  * * `Billing` - Billing
+ * * `Loop` - Loop
  */
 export type ActivityLogListScopesItem = (typeof ActivityLogListScopesItem)[keyof typeof ActivityLogListScopesItem]
 
@@ -1235,6 +1238,7 @@ export const ActivityLogListScopesItem = {
     Metric: 'Metric',
     TableCertification: 'TableCertification',
     Billing: 'Billing',
+    Loop: 'Loop',
 } as const
 
 export type AdvancedActivityLogsListParams = {
