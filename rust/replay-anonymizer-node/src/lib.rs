@@ -129,14 +129,27 @@ fn anonymize_kafka_payload_ffi(mut cx: FunctionContext) -> JsResult<JsPromise> {
         Some(v) => Some(v.downcast_or_throw::<JsString, _>(&mut cx)?.value(&mut cx)),
         None => None,
     };
-    // Present + non-empty enables the image-collection lane keyed to this pseudonymous team id.
-    // Same loud-failure posture as the hosts: a non-string must not silently disable collection.
-    let pseudo_team: Option<String> = match cx.argument_opt(3) {
-        Some(v) if v.is_a::<JsUndefined, _>(&mut cx) || v.is_a::<JsNull, _>(&mut cx) => None,
-        Some(v) => Some(v.downcast_or_throw::<JsString, _>(&mut cx)?.value(&mut cx)),
-        None => None,
-    }
-    .filter(|s| !s.is_empty());
+    // Present + non-empty (both of them) enables the image-collection lane, keyed to this
+    // pseudonymous team id and per-team content-HMAC key. Same loud-failure posture as the hosts:
+    // a non-string, or one without the other, must not silently disable or mis-key collection.
+    let opt_string_arg = |cx: &mut FunctionContext, index: usize| -> NeonResult<Option<String>> {
+        Ok(match cx.argument_opt(index) {
+            Some(v) if v.is_a::<JsUndefined, _>(cx) || v.is_a::<JsNull, _>(cx) => None,
+            Some(v) => Some(v.downcast_or_throw::<JsString, _>(cx)?.value(cx)),
+            None => None,
+        }
+        .filter(|s| !s.is_empty()))
+    };
+    let pseudo_team = opt_string_arg(&mut cx, 3)?;
+    let content_key = opt_string_arg(&mut cx, 4)?;
+    let image_collection = match (pseudo_team, content_key) {
+        (Some(pseudo_team), Some(content_key)) => Some(ImageCollection {
+            pseudo_team,
+            content_key,
+        }),
+        (None, None) => None,
+        _ => return cx.throw_error("pseudoTeam and contentKey must be passed together"),
+    };
     let promise = cx
         .task(move || -> TaskOutcome {
             // Contain any panic on untrusted input so it fails closed (the caller drops the message)
@@ -171,7 +184,7 @@ fn anonymize_kafka_payload_ffi(mut cx: FunctionContext) -> JsResult<JsPromise> {
                     &mut payload,
                     snapshot::AnonymizeOpts::default(),
                     first_party_hosts,
-                    pseudo_team.map(|pseudo_team| ImageCollection { pseudo_team }),
+                    image_collection,
                 ) {
                     Ok(out) => {
                         let meta = serde_json::to_string(&out.meta)
