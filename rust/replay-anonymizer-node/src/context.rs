@@ -12,6 +12,7 @@ use anyhow::{bail, Result};
 
 use crate::allow_lists::AllowLists;
 use crate::blur::{blur_image_data_uri, pixelate_raw_rgba};
+use crate::collect::{collectable_data_uri_bytes, CollectedImage, ImageCollection, ImageCollector};
 
 /// Cumulative decompressed-bytes budget across all cv payloads in one message: the per-payload
 /// `gzip::MAX_DECOMPRESSED_BYTES` cap bounds each field, this bounds their sum so many high-ratio
@@ -25,8 +26,11 @@ pub struct Ctx<'a> {
     pub first_party_hosts: Vec<String>,
     pub cv_budget: Cell<usize>,
     // key: the original data URI (data-image blur), or `raw:{w}x{h}:{base64}` (raw RGBA pixelate).
-    // value: the blurred result, or `None` when blurring failed (caller falls back to a blank pixel).
+    // value: the replacement — a content ref (collection lane), a blurred data URI — or `None`
+    // when neither could be produced (caller falls back to a blank pixel).
     blur_cache: RefCell<HashMap<String, Option<String>>>,
+    // `Some` routes collectable images to the scrub lane instead of the inline blur.
+    images: Option<RefCell<ImageCollector>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -35,11 +39,28 @@ impl<'a> Ctx<'a> {
     }
 
     pub fn with_first_party_hosts(allow: &'a AllowLists, first_party_hosts: Vec<String>) -> Self {
+        Self::with_image_collection(allow, first_party_hosts, None)
+    }
+
+    pub fn with_image_collection(
+        allow: &'a AllowLists,
+        first_party_hosts: Vec<String>,
+        image_collection: Option<ImageCollection>,
+    ) -> Self {
         Self {
             allow,
             first_party_hosts,
             cv_budget: Cell::new(CV_MESSAGE_DECOMPRESSION_BUDGET),
             blur_cache: RefCell::new(HashMap::new()),
+            images: image_collection.map(|c| RefCell::new(ImageCollector::new(c))),
+        }
+    }
+
+    /// Drain the collected images (hash-sorted). Empty when collection was off.
+    pub fn into_collected_images(self) -> Vec<CollectedImage> {
+        match self.images {
+            Some(collector) => collector.into_inner().into_images(),
+            None => Vec::new(),
         }
     }
 
@@ -56,16 +77,28 @@ impl<'a> Ctx<'a> {
     // Borrow discipline: never hold a `blur_cache` borrow across the blur call — the compute runs
     // borrow-free, so a future blur helper that re-entered `Ctx` still couldn't double-borrow-panic.
 
-    /// Blur a data-image URI, memoized on the URI. `None` → caller falls back to a blank/placeholder.
+    /// Replace a data-image URI, memoized on the URI: a content ref when the collection lane takes
+    /// it (the original bytes ride back to the caller for the out-of-band scrub), else the inline
+    /// blur. `None` → caller falls back to a blank/placeholder.
     pub fn blur_data_uri(&self, original: &str) -> Option<String> {
         if let Some(hit) = self.blur_cache.borrow().get(original) {
             return hit.clone();
         }
-        let result = blur_image_data_uri(original);
+        let result = self
+            .collect_image(original)
+            .or_else(|| blur_image_data_uri(original));
         self.blur_cache
             .borrow_mut()
             .insert(original.to_string(), result.clone());
         result
+    }
+
+    /// The collection lane's ref for a data URI, or `None` (collection off, non-collectable URI,
+    /// or a cap hit) — the caller then blurs inline as before.
+    fn collect_image(&self, original: &str) -> Option<String> {
+        let collector = self.images.as_ref()?;
+        let bytes = collectable_data_uri_bytes(original)?;
+        collector.borrow_mut().collect(bytes)
     }
 
     /// Pixelate raw RGBA pixels, memoized on dimensions + bytes.

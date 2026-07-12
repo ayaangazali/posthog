@@ -6,6 +6,7 @@ use base64::Engine;
 use simd_json::borrowed::{Object, Value};
 
 use crate::blur::{blank_image_data_uri, is_image_data_uri, split_data_uri, BLANK_PNG_BASE64};
+use crate::collect::is_image_ref;
 use crate::context::Ctx;
 use crate::json::{
     as_array, as_array_mut, as_object, as_object_mut, as_str, as_u32, as_usize, key, string_value,
@@ -169,11 +170,14 @@ fn blur_blob_image(ctx: &Ctx<'_>, blob: &mut Object<'_>) -> bool {
         None => return false,
     };
     let original = format!("data:{mime};base64,{base64}");
-    let (new_b64, new_type) = match ctx
-        .blur_data_uri(&original)
-        .and_then(|b| split_data_uri(&b))
-    {
-        Some((m, b64)) => (b64, m),
+    let (new_b64, new_type) = match ctx.blur_data_uri(&original) {
+        // The collection lane's ref replaces the payload wholesale (it is the consumer's join
+        // key, not decodable bytes); the mime type stays.
+        Some(r) if is_image_ref(&r) => (r, mime),
+        Some(b) => match split_data_uri(&b) {
+            Some((m, b64)) => (b64, m),
+            None => (BLANK_PNG_BASE64.to_string(), "image/png".to_string()),
+        },
         // Fail-safe: a blank pixel (matches the TS synchronous neutralization).
         None => (BLANK_PNG_BASE64.to_string(), "image/png".to_string()),
     };

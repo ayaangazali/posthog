@@ -15,6 +15,7 @@ pub mod assets;
 pub mod blur;
 pub mod bytewalk;
 pub mod canvas;
+pub mod collect;
 pub mod context;
 pub mod css;
 pub mod cv;
@@ -29,6 +30,7 @@ pub mod url;
 pub mod value;
 
 pub use allow_lists::AllowLists;
+pub use collect::ImageCollection;
 pub use context::Ctx;
 pub use event::{anonymize_event, anonymize_event_str, anonymize_message};
 pub use snapshot::{
@@ -104,9 +106,11 @@ fn init_anonymizer(mut cx: FunctionContext) -> JsResult<JsNull> {
     Ok(cx.null())
 }
 
-/// The off-thread outcome: anonymized output, a classified failure (dlq/drop reason + detail), or an
-/// unclassified error (panic, missing init) that the caller must treat as `anonymize_failed`.
-type TaskOutcome = Result<Result<(Vec<u8>, String, &'static str), (&'static str, String)>, String>;
+/// The off-thread outcome: anonymized output (lines, meta JSON, route, packed image bytes), a
+/// classified failure (dlq/drop reason + detail), or an unclassified error (panic, missing init)
+/// that the caller must treat as `anonymize_failed`.
+type TaskOutcome =
+    Result<Result<(Vec<u8>, String, &'static str, Vec<u8>), (&'static str, String)>, String>;
 
 fn anonymize_kafka_payload_ffi(mut cx: FunctionContext) -> JsResult<JsPromise> {
     // One copy on the event loop: the buffer's bytes move into the task (they can't be borrowed
@@ -125,6 +129,14 @@ fn anonymize_kafka_payload_ffi(mut cx: FunctionContext) -> JsResult<JsPromise> {
         Some(v) => Some(v.downcast_or_throw::<JsString, _>(&mut cx)?.value(&mut cx)),
         None => None,
     };
+    // Present + non-empty enables the image-collection lane keyed to this pseudonymous team id.
+    // Same loud-failure posture as the hosts: a non-string must not silently disable collection.
+    let pseudo_team: Option<String> = match cx.argument_opt(3) {
+        Some(v) if v.is_a::<JsUndefined, _>(&mut cx) || v.is_a::<JsNull, _>(&mut cx) => None,
+        Some(v) => Some(v.downcast_or_throw::<JsString, _>(&mut cx)?.value(&mut cx)),
+        None => None,
+    }
+    .filter(|s| !s.is_empty());
     let promise = cx
         .task(move || -> TaskOutcome {
             // Contain any panic on untrusted input so it fails closed (the caller drops the message)
@@ -159,11 +171,12 @@ fn anonymize_kafka_payload_ffi(mut cx: FunctionContext) -> JsResult<JsPromise> {
                     &mut payload,
                     snapshot::AnonymizeOpts::default(),
                     first_party_hosts,
+                    pseudo_team.map(|pseudo_team| ImageCollection { pseudo_team }),
                 ) {
                     Ok(out) => {
                         let meta = serde_json::to_string(&out.meta)
                             .map_err(|e| format!("serialize meta: {e}"))?;
-                        Ok(Ok((out.lines, meta, out.route.as_str())))
+                        Ok(Ok((out.lines, meta, out.route.as_str(), out.image_bytes)))
                     }
                     Err(f) => Ok(Err((f.kind.reason(), f.detail))),
                 }
@@ -189,10 +202,12 @@ fn anonymize_kafka_payload_ffi(mut cx: FunctionContext) -> JsResult<JsPromise> {
                 obj.set(cx, "meta", null)?;
                 let null = cx.null();
                 obj.set(cx, "route", null)?;
+                let null = cx.null();
+                obj.set(cx, "images", null)?;
                 Ok(())
             };
             match result {
-                Ok(Ok((lines, meta, route))) => {
+                Ok(Ok((lines, meta, route, image_bytes))) => {
                     let failed = cx.boolean(false);
                     obj.set(&mut cx, "failed", failed)?;
                     let null = cx.null();
@@ -207,6 +222,13 @@ fn anonymize_kafka_payload_ffi(mut cx: FunctionContext) -> JsResult<JsPromise> {
                     obj.set(&mut cx, "meta", meta)?;
                     let route = cx.string(route);
                     obj.set(&mut cx, "route", route)?;
+                    if image_bytes.is_empty() {
+                        let null = cx.null();
+                        obj.set(&mut cx, "images", null)?;
+                    } else {
+                        let images = JsBuffer::external(&mut cx, image_bytes);
+                        obj.set(&mut cx, "images", images)?;
+                    }
                 }
                 Ok(Err((reason, detail))) => set_failure(&mut cx, &obj, reason, detail)?,
                 // Fail closed: an unclassified error still drops the message.
