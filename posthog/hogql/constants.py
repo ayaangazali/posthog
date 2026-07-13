@@ -48,6 +48,13 @@ BREAKDOWN_VALUES_LIMIT = 25
 BREAKDOWN_VALUES_LIMIT_FOR_COUNTRIES = 300
 BREAKDOWN_VALUE_MAX_LENGTH = 400
 
+# Cap on how deeply an AST may nest before the recursive Python visitors (resolve/clone/print)
+# refuse to traverse it. Mirrors the Rust parser's MAX_RECURSION_DEPTH (see
+# rust/hogql/parser/src/parse.rs), which itself mirrors ClickHouse's max_parser_depth default.
+# The parser already rejects deeper input at parse time; this is the equivalent guard for ASTs
+# that reach a visitor another way (e.g. built or rewritten in Python).
+MAX_QUERY_DEPTH = 1000
+
 type HogQLDialect = Literal["hogql", "clickhouse", "postgres", "duckdb", "mysql", "snowflake", "redshift"]
 
 # All dialects that compile to an external SQL database queried directly (as opposed to
