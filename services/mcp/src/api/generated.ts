@@ -14687,6 +14687,18 @@ export namespace Schemas {
     }
 
     /**
+     * * `user` - user
+     * * `ai_generated` - ai_generated
+     */
+    export type CreatedSourceEnum = typeof CreatedSourceEnum[keyof typeof CreatedSourceEnum];
+
+
+    export const CreatedSourceEnum = {
+      User: 'user',
+      AiGenerated: 'ai_generated',
+    } as const;
+
+    /**
      * * `web` - web
      * * `api` - api
      * * `mcp` - mcp
@@ -15528,6 +15540,87 @@ export namespace Schemas {
          * @nullable
          */
       error: string | null;
+    }
+
+    /**
+     * Machine-readable query. Omit for a name+description-only stub. Stored upgrade-canonical.
+     * @nullable
+     */
+    export type DataCatalogMetricDefinition = { [key: string]: unknown } | null;
+
+    export interface DataCatalogMetric {
+      readonly id: string;
+      /**
+         * Identifier-safe run handle, unique per team and reserved forever. Write-once.
+         * @maxLength 128
+         * @pattern ^[A-Za-z][A-Za-z0-9_]*$
+         */
+      name: string;
+      /**
+         * Human-friendly label. Mutable, unlike name.
+         * @maxLength 255
+         */
+      display_name?: string;
+      /** What the metric means and how to interpret it. */
+      description: string;
+      /**
+         * Unit of the result, e.g. usd, percent, cents.
+         * @maxLength 64
+         */
+      unit?: string;
+      /**
+         * Email of the human accountable for this metric, or null.
+         * @nullable
+         */
+      readonly owner: string | null;
+      /**
+         * Machine-readable query. Omit for a name+description-only stub. Stored upgrade-canonical.
+         * @nullable
+         */
+      definition?: DataCatalogMetricDefinition;
+      /**
+         * Query kind of the definition (HogQLQuery, TrendsQuery, ...), or null for a stub.
+         * @nullable
+         */
+      readonly definition_kind: string | null;
+      /** Tables the definition directly references, extracted at write time for the catalog's denied-table filter. */
+      readonly referenced_table_names: unknown;
+      /** Persisted lifecycle state: 'proposed' or 'approved'. Drift is reported separately. */
+      readonly status: string;
+      /** @nullable */
+      readonly approved_at: string | null;
+      /**
+         * Short ID of the insight this metric was created from, for drift detection.
+         * @nullable
+         */
+      readonly source_insight_short_id: string | null;
+      /**
+         * When the metric was last run (30-minute throttle).
+         * @nullable
+         */
+      readonly last_run_at: string | null;
+      /** Whether a human ('user') or an agent ('ai_generated') authored this metric.
+       *
+       * * `user` - user
+       * * `ai_generated` - ai_generated */
+      created_source?: CreatedSourceEnum;
+      /**
+         * Model that generated the metric, if AI-authored.
+         * @maxLength 128
+         */
+      ai_model?: string;
+      /**
+         * AI author's confidence in the proposal, 0-1.
+         * @nullable
+         */
+      confidence?: number | null;
+      /** AI author's reasoning, surfaced as review context. */
+      reasoning?: string;
+      /** User who first created this metric. */
+      readonly created_by: UserBasic;
+      readonly created_at: string;
+      /** @nullable */
+      readonly updated_at: string | null;
     }
 
     export interface DataColorTheme {
@@ -16988,6 +17081,8 @@ export namespace Schemas {
      * * `TerraApi` - TerraApi
      * * `TriggerDev` - TriggerDev
      * * `Turso` - Turso
+     * * `Singular` - Singular
+     * * `Swonkie` - Swonkie
      * * `TwelveLabs` - TwelveLabs
      * * `Twenty` - Twenty
      * * `Unstructured` - Unstructured
@@ -17747,6 +17842,8 @@ export namespace Schemas {
       TerraApi: 'TerraApi',
       TriggerDev: 'TriggerDev',
       Turso: 'Turso',
+      Singular: 'Singular',
+      Swonkie: 'Swonkie',
       TwelveLabs: 'TwelveLabs',
       Twenty: 'Twenty',
       Unstructured: 'Unstructured',
@@ -18520,6 +18617,8 @@ export namespace Schemas {
        * * `TerraApi` - TerraApi
        * * `TriggerDev` - TriggerDev
        * * `Turso` - Turso
+       * * `Singular` - Singular
+       * * `Swonkie` - Swonkie
        * * `TwelveLabs` - TwelveLabs
        * * `Twenty` - Twenty
        * * `Unstructured` - Unstructured
@@ -20308,6 +20407,7 @@ export namespace Schemas {
      * * `postgres` - postgres
      * * `mysql` - mysql
      * * `snowflake` - snowflake
+     * * `redshift` - redshift
      */
     export type EngineEnum = typeof EngineEnum[keyof typeof EngineEnum];
 
@@ -20317,6 +20417,7 @@ export namespace Schemas {
       Postgres: 'postgres',
       Mysql: 'mysql',
       Snowflake: 'snowflake',
+      Redshift: 'redshift',
     } as const;
 
     /**
@@ -21864,7 +21965,7 @@ export namespace Schemas {
       /** @maxLength 100 */
       model: string;
       /**
-         * Team provider key to run this eval with (same provider as `provider`). Leave null only for brief pre-key testing; real evals should set it.
+         * Optional team provider key to run this evaluation with; it must use the same provider. May be null when no key is pinned or after the selected key is removed.
          * @nullable
          */
       provider_key_id?: string | null;
@@ -21914,6 +22015,7 @@ export namespace Schemas {
       target?: EvaluationTargetEnum;
       /** Target-specific config. For 'trace' target: {window_seconds}. Empty for 'generation'. */
       target_config?: EvaluationTargetConfig;
+      /** Provider and model for an llm_judge evaluation. Required when creating or switching to llm_judge. To add or replace a model, provide both provider and model. On an existing configured llm_judge, omit this field to keep the current model; null is rejected. When switching an llm_judge to hog or sentiment, set this field to null. Legacy llm_judge evaluations without a model remain editable without adding one. The nested provider_key_id may be null. */
       model_configuration?: ModelConfiguration | null;
       readonly created_at: string;
       readonly updated_at: string;
@@ -24217,7 +24319,8 @@ export namespace Schemas {
        * * `duckdb` - duckdb
        * * `postgres` - postgres
        * * `mysql` - mysql
-       * * `snowflake` - snowflake */
+       * * `snowflake` - snowflake
+       * * `redshift` - redshift */
       readonly engine: EngineEnum | null;
     }
 
@@ -24974,6 +25077,8 @@ export namespace Schemas {
        * * `TerraApi` - TerraApi
        * * `TriggerDev` - TriggerDev
        * * `Turso` - Turso
+       * * `Singular` - Singular
+       * * `Swonkie` - Swonkie
        * * `TwelveLabs` - TwelveLabs
        * * `Twenty` - Twenty
        * * `Unstructured` - Unstructured
@@ -25085,7 +25190,8 @@ export namespace Schemas {
        * * `duckdb` - duckdb
        * * `postgres` - postgres
        * * `mysql` - mysql
-       * * `snowflake` - snowflake */
+       * * `snowflake` - snowflake
+       * * `redshift` - redshift */
       readonly engine: EngineEnum | null;
       /** @nullable */
       readonly last_run_at: string | null;
@@ -30059,6 +30165,17 @@ export namespace Schemas {
       identifier: string;
     }
 
+    export interface JiraIssueSignalExtra {
+      key: string;
+      url: string | null;
+      status: string | null;
+      priority: string | null;
+      assignee: string | null;
+      labels: string[];
+      created: string | null;
+      updated: string | null;
+    }
+
     export interface JiraProject {
       /** Jira project ID. */
       id: string;
@@ -33966,6 +34083,15 @@ export namespace Schemas {
       results: DashboardTemplate[];
     }
 
+    export interface PaginatedDataCatalogMetricList {
+      count: number;
+      /** @nullable */
+      next?: string | null;
+      /** @nullable */
+      previous?: string | null;
+      results: DataCatalogMetric[];
+    }
+
     export interface PaginatedDataColorThemeList {
       count: number;
       /** @nullable */
@@ -36098,6 +36224,7 @@ export namespace Schemas {
      * * `llm_analytics` - LLM analytics
      * * `github` - GitHub
      * * `linear` - Linear
+     * * `jira` - Jira
      * * `zendesk` - Zendesk
      * * `conversations` - Conversations
      * * `error_tracking` - Error tracking
@@ -36116,6 +36243,7 @@ export namespace Schemas {
       LlmAnalytics: 'llm_analytics',
       Github: 'github',
       Linear: 'linear',
+      Jira: 'jira',
       Zendesk: 'zendesk',
       Conversations: 'conversations',
       ErrorTracking: 'error_tracking',
@@ -39377,6 +39505,87 @@ export namespace Schemas {
       readonly non_portable_references?: NonPortableReferences;
     }
 
+    /**
+     * Machine-readable query. Omit for a name+description-only stub. Stored upgrade-canonical.
+     * @nullable
+     */
+    export type PatchedDataCatalogMetricDefinition = { [key: string]: unknown } | null;
+
+    export interface PatchedDataCatalogMetric {
+      readonly id?: string;
+      /**
+         * Identifier-safe run handle, unique per team and reserved forever. Write-once.
+         * @maxLength 128
+         * @pattern ^[A-Za-z][A-Za-z0-9_]*$
+         */
+      name?: string;
+      /**
+         * Human-friendly label. Mutable, unlike name.
+         * @maxLength 255
+         */
+      display_name?: string;
+      /** What the metric means and how to interpret it. */
+      description?: string;
+      /**
+         * Unit of the result, e.g. usd, percent, cents.
+         * @maxLength 64
+         */
+      unit?: string;
+      /**
+         * Email of the human accountable for this metric, or null.
+         * @nullable
+         */
+      readonly owner?: string | null;
+      /**
+         * Machine-readable query. Omit for a name+description-only stub. Stored upgrade-canonical.
+         * @nullable
+         */
+      definition?: PatchedDataCatalogMetricDefinition;
+      /**
+         * Query kind of the definition (HogQLQuery, TrendsQuery, ...), or null for a stub.
+         * @nullable
+         */
+      readonly definition_kind?: string | null;
+      /** Tables the definition directly references, extracted at write time for the catalog's denied-table filter. */
+      readonly referenced_table_names?: unknown;
+      /** Persisted lifecycle state: 'proposed' or 'approved'. Drift is reported separately. */
+      readonly status?: string;
+      /** @nullable */
+      readonly approved_at?: string | null;
+      /**
+         * Short ID of the insight this metric was created from, for drift detection.
+         * @nullable
+         */
+      readonly source_insight_short_id?: string | null;
+      /**
+         * When the metric was last run (30-minute throttle).
+         * @nullable
+         */
+      readonly last_run_at?: string | null;
+      /** Whether a human ('user') or an agent ('ai_generated') authored this metric.
+       *
+       * * `user` - user
+       * * `ai_generated` - ai_generated */
+      created_source?: CreatedSourceEnum;
+      /**
+         * Model that generated the metric, if AI-authored.
+         * @maxLength 128
+         */
+      ai_model?: string;
+      /**
+         * AI author's confidence in the proposal, 0-1.
+         * @nullable
+         */
+      confidence?: number | null;
+      /** AI author's reasoning, surfaced as review context. */
+      reasoning?: string;
+      /** User who first created this metric. */
+      readonly created_by?: UserBasic;
+      readonly created_at?: string;
+      /** @nullable */
+      readonly updated_at?: string | null;
+    }
+
     export interface PatchedDataColorTheme {
       readonly id?: number;
       /** @maxLength 100 */
@@ -40154,6 +40363,7 @@ export namespace Schemas {
       target?: EvaluationTargetEnum;
       /** Target-specific config. For 'trace' target: {window_seconds}. Empty for 'generation'. */
       target_config?: PatchedEvaluationTargetConfig;
+      /** Provider and model for an llm_judge evaluation. Required when creating or switching to llm_judge. To add or replace a model, provide both provider and model. On an existing configured llm_judge, omit this field to keep the current model; null is rejected. When switching an llm_judge to hog or sentiment, set this field to null. Legacy llm_judge evaluations without a model remain editable without adding one. The nested provider_key_id may be null. */
       model_configuration?: ModelConfiguration | null;
       readonly created_at?: string;
       readonly updated_at?: string;
@@ -40567,7 +40777,8 @@ export namespace Schemas {
        * * `duckdb` - duckdb
        * * `postgres` - postgres
        * * `mysql` - mysql
-       * * `snowflake` - snowflake */
+       * * `snowflake` - snowflake
+       * * `redshift` - redshift */
       readonly engine?: EngineEnum | null;
       /** @nullable */
       readonly last_run_at?: string | null;
@@ -50552,6 +50763,7 @@ export namespace Schemas {
      * * `llm_analytics` - llm_analytics
      * * `github` - github
      * * `linear` - linear
+     * * `jira` - jira
      * * `zendesk` - zendesk
      * * `conversations` - conversations
      * * `error_tracking` - error_tracking
@@ -50570,6 +50782,7 @@ export namespace Schemas {
       LlmAnalytics: 'llm_analytics',
       Github: 'github',
       Linear: 'linear',
+      Jira: 'jira',
       Zendesk: 'zendesk',
       Conversations: 'conversations',
       ErrorTracking: 'error_tracking',
@@ -50679,7 +50892,7 @@ export namespace Schemas {
       mcp_trace_id?: string | null;
     }
 
-    export type SignalExtra = SessionProblemSignalExtra | LlmEvalSignalExtra | LlmEvalReportSignalExtra | ZendeskTicketSignalExtra | GithubIssueSignalExtra | LinearIssueSignalExtra | ConversationsTicketSignalExtra | ErrorTrackingSignalExtra | PgAnalyzeIssueSignalExtra | EndpointExecutionFailedSignalExtra | EndpointBreakdownLimitExceededSignalExtra | SignalsScoutSignalExtra | LogsAlertStateChangeSignalExtra | ReplayVisionScannerFindingSignalExtra | HealthCheckSignalExtra;
+    export type SignalExtra = SessionProblemSignalExtra | LlmEvalSignalExtra | LlmEvalReportSignalExtra | ZendeskTicketSignalExtra | GithubIssueSignalExtra | LinearIssueSignalExtra | JiraIssueSignalExtra | ConversationsTicketSignalExtra | ErrorTrackingSignalExtra | PgAnalyzeIssueSignalExtra | EndpointExecutionFailedSignalExtra | EndpointBreakdownLimitExceededSignalExtra | SignalsScoutSignalExtra | LogsAlertStateChangeSignalExtra | ReplayVisionScannerFindingSignalExtra | HealthCheckSignalExtra;
 
     export type SignalMatchMetadata = MatchedMetadata | NoMatchMetadata;
 
@@ -50694,6 +50907,7 @@ export namespace Schemas {
        * * `llm_analytics` - llm_analytics
        * * `github` - github
        * * `linear` - linear
+       * * `jira` - jira
        * * `zendesk` - zendesk
        * * `conversations` - conversations
        * * `error_tracking` - error_tracking
@@ -53261,6 +53475,8 @@ export namespace Schemas {
        * * `TerraApi` - TerraApi
        * * `TriggerDev` - TriggerDev
        * * `Turso` - Turso
+       * * `Singular` - Singular
+       * * `Swonkie` - Swonkie
        * * `TwelveLabs` - TwelveLabs
        * * `Twenty` - Twenty
        * * `Unstructured` - Unstructured
@@ -54060,6 +54276,8 @@ export namespace Schemas {
        * * `TerraApi` - TerraApi
        * * `TriggerDev` - TriggerDev
        * * `Turso` - Turso
+       * * `Singular` - Singular
+       * * `Swonkie` - Swonkie
        * * `TwelveLabs` - TwelveLabs
        * * `Twenty` - Twenty
        * * `Unstructured` - Unstructured
@@ -54851,6 +55069,8 @@ export namespace Schemas {
        * * `TerraApi` - TerraApi
        * * `TriggerDev` - TriggerDev
        * * `Turso` - Turso
+       * * `Singular` - Singular
+       * * `Swonkie` - Swonkie
        * * `TwelveLabs` - TwelveLabs
        * * `Twenty` - Twenty
        * * `Unstructured` - Unstructured
@@ -59713,6 +59933,29 @@ export namespace Schemas {
     export interface _TracingAttributeBreakdownRequest {
       /** The attribute breakdown query to execute. */
       query: _TracingAttributeBreakdownQueryBody;
+    }
+
+    export interface _TracingAttributeBreakdownRow {
+      /** The attribute's value for this group. Spans without the attribute group under ''. */
+      value: string;
+      /** Number of matching spans with this value. */
+      count: number;
+      /** Number of matching error spans (status_code = 2). */
+      error_count: number;
+      /** Median span duration in nanoseconds. */
+      p50_duration_nano: number;
+      /** 95th percentile span duration in nanoseconds. */
+      p95_duration_nano: number;
+    }
+
+    export interface _TracingAttributeBreakdownResponse {
+      /** One row per distinct attribute value, ordered by the requested column descending. */
+      results: _TracingAttributeBreakdownRow[];
+      /**
+         * Rows for the comparison window when compareFilter.compare is true, else null.
+         * @nullable
+         */
+      compare: _TracingAttributeBreakdownRow[] | null;
     }
 
     export interface _TracingAttributeEntry {
@@ -65484,6 +65727,7 @@ export namespace Schemas {
      * * `SignalReport` - SignalReport
      * * `SignalScoutConfig` - SignalScoutConfig
      * * `StreamlitApp` - StreamlitApp
+     * * `Metric` - Metric
      * @minLength 1
      */
     scope?: ActivityLogListScope;
@@ -65568,6 +65812,7 @@ export namespace Schemas {
       SignalReport: 'SignalReport',
       SignalScoutConfig: 'SignalScoutConfig',
       StreamlitApp: 'StreamlitApp',
+      Metric: 'Metric',
     } as const;
 
     /**
@@ -65638,6 +65883,7 @@ export namespace Schemas {
      * * `SignalReport` - SignalReport
      * * `SignalScoutConfig` - SignalScoutConfig
      * * `StreamlitApp` - StreamlitApp
+     * * `Metric` - Metric
      */
     export type ActivityLogListScopesItem = typeof ActivityLogListScopesItem[keyof typeof ActivityLogListScopesItem];
 
@@ -65710,6 +65956,7 @@ export namespace Schemas {
       SignalReport: 'SignalReport',
       SignalScoutConfig: 'SignalScoutConfig',
       StreamlitApp: 'StreamlitApp',
+      Metric: 'Metric',
     } as const;
 
     export type AdvancedActivityLogsListParams = {
@@ -66957,6 +67204,17 @@ export namespace Schemas {
       Json: 'json',
       Txt: 'txt',
     } as const;
+
+    export type DataCatalogMetricsListParams = {
+    /**
+     * Number of results to return per page.
+     */
+    limit?: number;
+    /**
+     * The initial index from which to return the results.
+     */
+    offset?: number;
+    };
 
     export type DataColorThemesListParams = {
     /**
