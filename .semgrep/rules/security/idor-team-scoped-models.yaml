@@ -187,6 +187,9 @@ rules:
                               |LogsAlertConfiguration
                               |LogsExclusionRule
                               |LogsView
+                              |Loop
+                              |LoopFire
+                              |LoopTrigger
                               |LLMModelConfiguration
                               |LLMPrompt
                               |LLMPromptLabel
@@ -490,6 +493,9 @@ rules:
                         |KnowledgeSource
                         |Link
                         |LiveDebuggerBreakpoint
+                        |Loop
+                        |LoopFire
+                        |LoopTrigger
                         |LLMModelConfiguration
                         |LLMPrompt
                         |LLMPromptLabel
