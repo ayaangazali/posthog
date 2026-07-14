@@ -23,10 +23,13 @@ STRIPE_VERSION_CLOVER = "2026-02-25.clover"
 LEGACY_STRIPE_API_VERSION = "2024-09-30.acacia"
 DEFAULT_STRIPE_API_VERSION = STRIPE_VERSION_CLOVER
 
+# Legacy is listed so sources pinned to it by migration 0057 round-trip in the picker instead of
+# rendering blank; new sources default to DEFAULT_STRIPE_API_VERSION, not this.
 STRIPE_API_VERSIONS: dict[str, str] = {
     STRIPE_VERSION_ACACIA: "Acacia (2025-02-24)",
     STRIPE_VERSION_BASIL: "Basil (2025-08-27)",
     STRIPE_VERSION_CLOVER: "Clover (2026-02-25)",
+    LEGACY_STRIPE_API_VERSION: "Acacia (2024-09-30, legacy)",
 }
 
 # The external table definitions in external_table_definitions.py were built for these versions.
