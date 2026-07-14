@@ -117,9 +117,8 @@ class PendingFollowup:
     # Sender-supplied idempotency key (stable across the sender's retries);
     # None falls back to a workflow-generated id.
     message_id: str | None = None
-    # The signal's context dict, carried through verbatim (e.g.
-    # actor_slack_user_id, so replies to this message's turn tag the actual
-    # speaker). Consumers validate the keys they read.
+    # Signal context carried verbatim (e.g. actor_slack_user_id for reply
+    # tagging); consumers validate the keys they read.
     context: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1675,9 +1674,9 @@ class ProcessTaskWorkflow(PostHogWorkflow):
         message_id: Optional[str] = None,
         message_context: Optional[dict[str, Any]] = None,
     ) -> None:
-        # This positional arg list is frozen: `context` is the extension point
-        # (new per-message fields travel as validated keys), because old/new
-        # workers tolerate arity skew only by truncation/defaults.
+        # The positional arg list is frozen (old/new workers tolerate arity
+        # skew only by truncation/defaults); new per-message fields go into
+        # ``message_context`` as validated keys.
         # Log signal arrival so we can correlate it with the adapter's "begin dispatch"
         # log below — gaps between the two point at workflow-loop backpressure.
         context = self._context

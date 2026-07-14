@@ -75,10 +75,11 @@ def _slack_permission_state_updates(policy: SlackPermissionPolicy) -> dict[str, 
 
 
 def _slack_actor_state_updates(*, user_id: int, slack_user_id: str) -> dict[str, Any]:
-    return {
-        "slack_actor_user_id": user_id,
-        "slack_actor_slack_user_id": slack_user_id,
-    }
+    from products.tasks.backend.logic.services.run_actor import (  # noqa: PLC0415 — keep tasks deps off the slack_app import path
+        slack_actor_state_updates,
+    )
+
+    return slack_actor_state_updates(user_id=user_id, slack_user_id=slack_user_id)
 
 
 def _slack_posthog_mcp_scopes(policy: SlackPermissionPolicy) -> Literal["read_only", "full"]:
@@ -880,10 +881,8 @@ def forward_posthog_code_followup_activity(
     ):
         return True
 
-    # Legacy latest-actor mark, kept as the reply-tag fallback for turns with
-    # no per-message actor (boot prompt, pre-rollout runs). The authoritative
-    # run-state actor is stamped at delivery time, turn-scoped, by
-    # send_followup_to_sandbox.
+    # Reply-tag fallback for turns with no per-turn actor (boot prompt,
+    # pre-rollout runs); the actor stamped at delivery normally wins.
     if slack_user_id != mapping.latest_actor_slack_user_id:
         mapping.latest_actor_slack_user_id = slack_user_id
         mapping.save(update_fields=["latest_actor_slack_user_id", "updated_at"])
@@ -987,12 +986,9 @@ def forward_posthog_code_followup_activity(
         or user_text
     )
 
-    # Deliver through the task workflow's follow-up queue rather than straight
-    # to the sandbox: the queue's delivery activity rebinds the sandbox's MCP
-    # session to this message's actor before the turn runs, keeps messages
-    # strictly ordered with the web path, and pins credential resolution to
-    # the actor carried in the payload instead of the mutable run-state actor.
-    # The deterministic message id keeps redelivery idempotent across retries.
+    # Queue on the workflow so delivery is ordered with the web path and the
+    # turn runs under this message's actor. The deterministic message id
+    # keeps redelivery idempotent.
     signal_result = tasks_facade.signal_task_run_user_message(
         task_run.id,
         mapping.task_id,

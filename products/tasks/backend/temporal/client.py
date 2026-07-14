@@ -473,8 +473,8 @@ def signal_task_followup_message(
     message_id: str | None = None,
     context: dict[str, Any] | None = None,
 ) -> None:
-    """``context`` is the signal's extension point: new per-message fields
-    travel as keys (validated handler-side), never as new positional args."""
+    """New per-message fields go in ``context`` — the positional signal args
+    are frozen for worker deploy compat."""
     client = sync_connect()
     handle = client.get_workflow_handle(workflow_id)
     asyncio.run(

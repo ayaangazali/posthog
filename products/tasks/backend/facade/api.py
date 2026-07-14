@@ -2697,11 +2697,10 @@ def relay_task_run_message(
             logger.exception("task_run_relay_text_signal_failed", extra={"run_id": str(run.id)})
         return "skipped", None
 
-    # Capture the turn's actor now, at trigger time: delivery stamps the
-    # run-state actor when each turn starts and the next delivery only begins
-    # after this turn's ack, so reading it here (not in the relay activity,
-    # which may run after the next message was delivered) tags the speaker the
-    # agent is actually answering.
+    # Read the turn's actor at trigger time: the relay activity may run after
+    # the next message's delivery has restamped the run-state actor. (A turn
+    # outliving the delivery ack can still be restamped early — rare, and
+    # only costs the reply tag.)
     mention_slack_user_id = (run.state or {}).get("slack_actor_slack_user_id")
     try:
         relay_id = execute_posthog_code_agent_relay_workflow(
