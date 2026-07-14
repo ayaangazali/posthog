@@ -35034,7 +35034,7 @@ export namespace Schemas {
       connectors?: LoopConnectors;
       /** Per-channel notification configuration. */
       notifications?: LoopNotifications;
-      /** Full desired trigger list, id-stable: entries with a matching `id` are updated in place, entries without one are created, and existing triggers absent from this list are deleted. Omit the field entirely to leave triggers untouched. */
+      /** Full desired trigger list, id-stable: entries with a matching `id` are updated in place, entries without one are created, and existing triggers absent from this list are deleted. Omit the field entirely to leave triggers untouched. At most 25 triggers per loop. */
       triggers?: LoopTriggerWrite[];
     }
 
@@ -46189,7 +46189,7 @@ export namespace Schemas {
       connectors?: LoopConnectors;
       /** Per-channel notification configuration. */
       notifications?: LoopNotifications;
-      /** Full desired trigger list, id-stable: entries with a matching `id` are updated in place, entries without one are created, and existing triggers absent from this list are deleted. Omit the field entirely to leave triggers untouched. */
+      /** Full desired trigger list, id-stable: entries with a matching `id` are updated in place, entries without one are created, and existing triggers absent from this list are deleted. Omit the field entirely to leave triggers untouched. At most 25 triggers per loop. */
       triggers?: LoopTriggerWrite[];
     }
 
