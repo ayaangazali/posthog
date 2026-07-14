@@ -27,6 +27,10 @@ class SlackThreadTaskMapping(UUIDModel):
         related_name="slack_thread_mappings",
     )
     mentioning_slack_user_id = models.CharField(max_length=64)
+    # Reply-tag fallback only: agent replies tag the per-turn actor captured
+    # at relay trigger time (products/tasks slack_relay), so this latest-
+    # speaker mark matters only for runs started before that rollout. Remove
+    # the column and its forward-time stamp once those runs have drained.
     latest_actor_slack_user_id = models.CharField(max_length=64, null=True, blank=True)
     # Slack `ts` of the most recent message we've already shown to the agent (either
     # in the original `<slack_thread_context>` block at task creation, or in a follow-up

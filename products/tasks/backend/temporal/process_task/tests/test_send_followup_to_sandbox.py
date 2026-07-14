@@ -418,7 +418,9 @@ class TestSendFollowupActivityRefreshOrdering:
         ) as mock_resolve:
             mock_resolve.return_value = MagicMock(id=99)
             send_followup_to_sandbox(
-                SendFollowupToSandboxInput(run_id="run-1", message="hi", actor_user_id=99, actor_slack_user_id="U_BOB")
+                SendFollowupToSandboxInput(
+                    run_id="run-1", message="hi", actor_user_id=99, context={"actor_slack_user_id": "U_BOB"}
+                )
             )
 
         _patches["task_run_cls"].update_state_atomic.assert_called_once_with(

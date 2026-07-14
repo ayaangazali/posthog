@@ -61,10 +61,9 @@ class SendFollowupToSandboxInput:
     # delivery is immune to later writers of the run-state actor. None (older
     # senders, pre-rollout histories) falls back to the run-state actor.
     actor_user_id: int | None = None
-    # The sender's Slack user id; recorded into run state at delivery so
-    # turn-scoped consumers (reply tagging, the credential-refresh loop)
-    # follow the turn's actor.
-    actor_slack_user_id: str | None = None
+    # The message's signal context, carried verbatim (e.g. actor_slack_user_id
+    # for turn-scoped reply tagging). Consumers validate the keys they read.
+    context: dict[str, Any] | None = None
 
 
 @activity.defn
@@ -142,8 +141,9 @@ def _deliver_followup(input: SendFollowupToSandboxInput) -> None:
             # credential-refresh loop, the permission broker) see the actor of
             # the turn that is actually executing.
             updates: dict[str, Any] = {"slack_actor_user_id": input.actor_user_id}
-            if input.actor_slack_user_id:
-                updates["slack_actor_slack_user_id"] = input.actor_slack_user_id
+            actor_slack_user_id = (input.context or {}).get("actor_slack_user_id")
+            if isinstance(actor_slack_user_id, str) and actor_slack_user_id:
+                updates["slack_actor_slack_user_id"] = actor_slack_user_id
             try:
                 TaskRun.update_state_atomic(task_run.id, updates=updates)
             except Exception:

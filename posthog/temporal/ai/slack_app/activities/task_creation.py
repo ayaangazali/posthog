@@ -1005,7 +1005,7 @@ def forward_posthog_code_followup_activity(
     )
     if signal_result is not True:
         logger.warning(
-            "posthog_code_followup_signal_failed",
+            "slack_app_followup_signal_failed",
             channel=channel,
             thread_ts=thread_ts,
             task_run_id=str(task_run.id),

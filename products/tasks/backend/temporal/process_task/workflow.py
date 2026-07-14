@@ -1,6 +1,6 @@
 import json
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Optional
@@ -117,9 +117,10 @@ class PendingFollowup:
     # Sender-supplied idempotency key (stable across the sender's retries);
     # None falls back to a workflow-generated id.
     message_id: str | None = None
-    # The sender's Slack user id, so replies to this message's turn tag the
-    # actual speaker instead of the thread's latest actor.
-    actor_slack_user_id: str | None = None
+    # The signal's context dict, carried through verbatim (e.g.
+    # actor_slack_user_id, so replies to this message's turn tag the actual
+    # speaker). Consumers validate the keys they read.
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -690,7 +691,7 @@ class ProcessTaskWorkflow(PostHogWorkflow):
                                 artifact_ids=artifact_ids,
                                 actor_user_id=pending_followup.actor_user_id,
                                 message_id=pending_followup.message_id,
-                                actor_slack_user_id=pending_followup.actor_slack_user_id,
+                                context=pending_followup.context,
                             )
                             continue
 
@@ -1688,14 +1689,12 @@ class ProcessTaskWorkflow(PostHogWorkflow):
                 "artifact_count": len(artifact_ids or []),
             },
         )
-        message_context = message_context if isinstance(message_context, dict) else {}
-        actor_slack_user_id = message_context.get("actor_slack_user_id")
         pending_followup = PendingFollowup(
             message=message,
             artifact_ids=artifact_ids or [],
             actor_user_id=actor_user_id,
             message_id=message_id,
-            actor_slack_user_id=actor_slack_user_id if isinstance(actor_slack_user_id, str) else None,
+            context=message_context if isinstance(message_context, dict) else {},
         )
         # Always queue. `deprecate_patch` accepts existing non-deprecated
         # markers from workflows that ran the prior `workflow.patched(...)`
@@ -1757,7 +1756,7 @@ class ProcessTaskWorkflow(PostHogWorkflow):
         artifact_ids: list[str],
         actor_user_id: int | None = None,
         message_id: str | None = None,
-        actor_slack_user_id: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> None:
         workflow.logger.info(
             "send_followup_dispatch_begin",
@@ -1777,7 +1776,7 @@ class ProcessTaskWorkflow(PostHogWorkflow):
                     artifact_ids=artifact_ids,
                     message_id=message_id or str(workflow.uuid4()),
                     actor_user_id=actor_user_id,
-                    actor_slack_user_id=actor_slack_user_id,
+                    context=context,
                 ),
                 start_to_close_timeout=timedelta(minutes=35),
                 # The activity heartbeats while blocked on the sync delivery
