@@ -57,6 +57,14 @@ class SendFollowupToSandboxInput:
     # Workflow-generated idempotency key. Stable across activity retries, so
     # the agent-server can drop a redelivery of a message it already accepted.
     message_id: str | None = None
+    # The sender of this specific message, captured when it was queued so
+    # delivery is immune to later writers of the run-state actor. None (older
+    # senders, pre-rollout histories) falls back to the run-state actor.
+    actor_user_id: int | None = None
+    # The sender's Slack user id; recorded into run state at delivery so
+    # turn-scoped consumers (reply tagging, the credential-refresh loop)
+    # follow the turn's actor.
+    actor_slack_user_id: str | None = None
 
 
 @activity.defn
@@ -117,9 +125,33 @@ def _deliver_followup(input: SendFollowupToSandboxInput) -> None:
         # background-mode runs hang until the inactivity timeout because
         raise ApplicationError(f"send_followup failed: {error_msg}", non_retryable=True)
 
+    # Pin credential resolution (and the token mint below, which re-resolves
+    # from state by policy) to this message's sender instead of the mutable
+    # run-state actor, which a concurrent follow-up or permission response may
+    # have overwritten. A local overlay only — the task_run instance and the
+    # persisted row are never touched. The resolver still validates team
+    # access and Slack fail-closed; non-Slack runs resolve the creator by
+    # policy regardless (see run_actor.py).
+    state = task_run.state
+    if input.actor_user_id is not None:
+        state = {**(state or {}), "slack_actor_user_id": input.actor_user_id}
+        if is_slack_interaction_state(state):
+            # Persist the turn's actor as the run-state actor. Deliveries are
+            # serialized by the workflow, so the durable actor now moves at
+            # turn boundaries — between-turn consumers (reply tagging, the
+            # credential-refresh loop, the permission broker) see the actor of
+            # the turn that is actually executing.
+            updates: dict[str, Any] = {"slack_actor_user_id": input.actor_user_id}
+            if input.actor_slack_user_id:
+                updates["slack_actor_slack_user_id"] = input.actor_slack_user_id
+            try:
+                TaskRun.update_state_atomic(task_run.id, updates=updates)
+            except Exception:
+                logger.warning("send_followup_actor_stamp_failed", run_id=input.run_id, exc_info=True)
+
     auth_token = None
-    actor_user = get_task_run_credential_user(task_run.task, task_run.state)
-    if is_slack_interaction_state(task_run.state) and actor_user is None:
+    actor_user = get_task_run_credential_user(task_run.task, state)
+    if is_slack_interaction_state(state) and actor_user is None:
         error_msg = "Slack actor unavailable for this run"
         _write_error_and_complete(input.run_id, error_msg, run_uses_dedicated_stream(task_run.state))
         raise RuntimeError(f"send_followup failed: {error_msg}")

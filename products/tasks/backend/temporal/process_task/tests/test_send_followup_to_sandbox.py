@@ -356,6 +356,7 @@ class TestSendFollowupActivityRefreshOrdering:
 
             yield {
                 "task_run": task_run,
+                "task_run_cls": mock_task_run_cls,
                 "refresh": mock_refresh,
                 "user_msg": mock_user_msg,
                 "conn_token": mock_conn_token,
@@ -388,6 +389,49 @@ class TestSendFollowupActivityRefreshOrdering:
         assert args[0] is _patches["task_run"]
         assert args[1] == "full"
         assert args[2] == "jwt"
+
+    def test_payload_actor_pins_resolution_over_run_state(self, _patches):
+        # A concurrent follow-up (or permission response) may overwrite the
+        # run-state actor between queueing and delivery; the message's own
+        # sender must win.
+        _patches["user_msg"].return_value = CommandResult(success=True, status_code=200)
+        _patches["task_run"].state = {"interaction_origin": "slack", "slack_actor_user_id": 42}
+
+        with patch(
+            "products.tasks.backend.temporal.process_task.activities.send_followup_to_sandbox.get_task_run_credential_user"
+        ) as mock_resolve:
+            mock_resolve.return_value = MagicMock(id=99)
+            send_followup_to_sandbox(SendFollowupToSandboxInput(run_id="run-1", message="hi", actor_user_id=99))
+
+        resolved_state = mock_resolve.call_args.args[1]
+        assert resolved_state["slack_actor_user_id"] == 99
+
+    def test_slack_delivery_stamps_turn_actor(self, _patches):
+        # The durable run-state actor must move at turn boundaries: delivery
+        # persists this message's sender so between-turn consumers (reply
+        # tagging, credential refresh) follow the executing turn.
+        _patches["user_msg"].return_value = CommandResult(success=True, status_code=200)
+        _patches["task_run"].state = {"interaction_origin": "slack", "slack_actor_user_id": 42}
+
+        with patch(
+            "products.tasks.backend.temporal.process_task.activities.send_followup_to_sandbox.get_task_run_credential_user"
+        ) as mock_resolve:
+            mock_resolve.return_value = MagicMock(id=99)
+            send_followup_to_sandbox(
+                SendFollowupToSandboxInput(run_id="run-1", message="hi", actor_user_id=99, actor_slack_user_id="U_BOB")
+            )
+
+        _patches["task_run_cls"].update_state_atomic.assert_called_once_with(
+            _patches["task_run"].id,
+            updates={"slack_actor_user_id": 99, "slack_actor_slack_user_id": "U_BOB"},
+        )
+
+    def test_non_slack_delivery_does_not_stamp(self, _patches):
+        _patches["user_msg"].return_value = CommandResult(success=True, status_code=200)
+
+        send_followup_to_sandbox(SendFollowupToSandboxInput(run_id="run-1", message="hi", actor_user_id=99))
+
+        _patches["task_run_cls"].update_state_atomic.assert_not_called()
 
     def test_default_scope_is_read_only(self, _patches):
         _patches["user_msg"].return_value = CommandResult(success=True, status_code=200)

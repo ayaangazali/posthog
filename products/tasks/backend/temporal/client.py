@@ -465,10 +465,21 @@ def execute_build_sandbox_image_workflow(image_id: str, team_id: int) -> None:
     )
 
 
-def signal_task_followup_message(workflow_id: str, message: str | None, artifact_ids: list[str]) -> None:
+def signal_task_followup_message(
+    workflow_id: str,
+    message: str | None,
+    artifact_ids: list[str],
+    actor_user_id: int | None = None,
+    message_id: str | None = None,
+    context: dict[str, Any] | None = None,
+) -> None:
+    """``context`` is the signal's extension point: new per-message fields
+    travel as keys (validated handler-side), never as new positional args."""
     client = sync_connect()
     handle = client.get_workflow_handle(workflow_id)
-    asyncio.run(handle.signal("send_followup_message", args=[message, artifact_ids]))
+    asyncio.run(
+        handle.signal("send_followup_message", args=[message, artifact_ids, actor_user_id, message_id, context])
+    )
 
 
 def signal_agent_text_delta(workflow_id: str, text: str) -> None:
@@ -510,6 +521,7 @@ def execute_posthog_code_agent_relay_workflow(
     user_message_ts: str | None = None,
     delete_progress: bool = True,
     reaction_emoji: str | None = None,
+    mention_slack_user_id: str | None = None,
 ) -> str:
     relay_id = relay_id or str(uuid.uuid4())
     workflow_id = f"posthog-code-agent-relay-{run_id}-{relay_id}"
@@ -525,6 +537,7 @@ def execute_posthog_code_agent_relay_workflow(
                 user_message_ts=user_message_ts,
                 delete_progress=delete_progress,
                 reaction_emoji=reaction_emoji,
+                mention_slack_user_id=mention_slack_user_id,
             ),
             id=workflow_id,
             id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,

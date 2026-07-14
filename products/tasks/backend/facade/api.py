@@ -196,7 +196,6 @@ __all__ = [
     "run_task_automation_now",
     "save_code_workflow_bindings",
     "send_cancel",
-    "send_user_message",
     "select_repository_for_message",
     "set_task_run_output",
     "set_task_title",
@@ -2475,7 +2474,15 @@ def validate_task_run_artifact_ids(
 
 
 def signal_task_run_user_message(
-    run_id: str | UUID, task_id: str | UUID, team_id: int, *, content: str | None, artifact_ids: list[str]
+    run_id: str | UUID,
+    task_id: str | UUID,
+    team_id: int,
+    *,
+    content: str | None,
+    artifact_ids: list[str],
+    actor_user_id: int | None = None,
+    message_id: str | None = None,
+    actor_slack_user_id: str | None = None,
 ) -> bool | None:
     """Queue a user_message follow-up signal on the run's workflow.
 
@@ -2489,7 +2496,8 @@ def signal_task_run_user_message(
     if run is None:
         return None
     try:
-        signal_task_followup_message(run.workflow_id, content, artifact_ids)
+        context = {"actor_slack_user_id": actor_slack_user_id} if actor_slack_user_id else None
+        signal_task_followup_message(run.workflow_id, content, artifact_ids, actor_user_id, message_id, context)
     except Exception:
         logger.exception("Failed to signal follow-up message for task run %s", run.id)
         return False
@@ -2689,8 +2697,19 @@ def relay_task_run_message(
             logger.exception("task_run_relay_text_signal_failed", extra={"run_id": str(run.id)})
         return "skipped", None
 
+    # Capture the turn's actor now, at trigger time: delivery stamps the
+    # run-state actor when each turn starts and the next delivery only begins
+    # after this turn's ack, so reading it here (not in the relay activity,
+    # which may run after the next message was delivered) tags the speaker the
+    # agent is actually answering.
+    mention_slack_user_id = (run.state or {}).get("slack_actor_slack_user_id")
     try:
-        relay_id = execute_posthog_code_agent_relay_workflow(run_id=str(run.id), text=trimmed, delete_progress=True)
+        relay_id = execute_posthog_code_agent_relay_workflow(
+            run_id=str(run.id),
+            text=trimmed,
+            delete_progress=True,
+            mention_slack_user_id=mention_slack_user_id if isinstance(mention_slack_user_id, str) else None,
+        )
     except Exception:
         logger.exception("task_run_relay_message_enqueue_failed", extra={"run_id": str(run.id)})
         return "failed", None
@@ -4642,36 +4661,6 @@ def create_sandbox_connection_token(run_id: str | UUID, user_id: int, distinct_i
 
     run = TaskRun.objects.select_related("task").get(id=run_id)
     return _create(run, user_id, distinct_id)
-
-
-def send_user_message(
-    run_id: str | UUID,
-    message: str | None = None,
-    *,
-    artifacts: list[dict] | None = None,
-    auth_token: str | None = None,
-    timeout: int | None = None,
-    message_id: str | None = None,
-):
-    """Push a follow-up user message (and/or artifacts) into a run's live sandbox.
-
-    ``message_id`` is the agent-server idempotency key — pass a deterministic id when the
-    caller may retry delivery so a redelivered message isn't applied twice.
-    """
-    from products.tasks.backend.logic.services.agent_command import (  # noqa: PLC0415 — keep sandbox deps off the api import path
-        send_user_message as _send,
-    )
-
-    run = TaskRun.objects.select_related("task").get(id=run_id)
-    # Forward only explicitly-provided optionals so the underlying call shape is unchanged.
-    extra: dict = {}
-    if artifacts is not None:
-        extra["artifacts"] = artifacts
-    if timeout is not None:
-        extra["timeout"] = timeout
-    if message_id is not None:
-        extra["message_id"] = message_id
-    return _send(run, message, auth_token=auth_token, **extra)
 
 
 def send_cancel(run_id: str | UUID, *, auth_token: str | None = None):

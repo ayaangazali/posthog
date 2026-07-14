@@ -113,6 +113,13 @@ class ProcessTaskInput:
 class PendingFollowup:
     message: str | None
     artifact_ids: list[str]
+    actor_user_id: int | None = None
+    # Sender-supplied idempotency key (stable across the sender's retries);
+    # None falls back to a workflow-generated id.
+    message_id: str | None = None
+    # The sender's Slack user id, so replies to this message's turn tag the
+    # actual speaker instead of the thread's latest actor.
+    actor_slack_user_id: str | None = None
 
 
 @dataclass
@@ -681,6 +688,9 @@ class ProcessTaskWorkflow(PostHogWorkflow):
                             await self._send_followup_to_sandbox(
                                 message=message,
                                 artifact_ids=artifact_ids,
+                                actor_user_id=pending_followup.actor_user_id,
+                                message_id=pending_followup.message_id,
+                                actor_slack_user_id=pending_followup.actor_slack_user_id,
                             )
                             continue
 
@@ -1656,7 +1666,17 @@ class ProcessTaskWorkflow(PostHogWorkflow):
         self._last_active_time = workflow.now()
 
     @temporalio.workflow.signal
-    async def send_followup_message(self, message: str | None = None, artifact_ids: Optional[list[str]] = None) -> None:
+    async def send_followup_message(
+        self,
+        message: str | None = None,
+        artifact_ids: Optional[list[str]] = None,
+        actor_user_id: Optional[int] = None,
+        message_id: Optional[str] = None,
+        message_context: Optional[dict[str, Any]] = None,
+    ) -> None:
+        # This positional arg list is frozen: `context` is the extension point
+        # (new per-message fields travel as validated keys), because old/new
+        # workers tolerate arity skew only by truncation/defaults.
         # Log signal arrival so we can correlate it with the adapter's "begin dispatch"
         # log below — gaps between the two point at workflow-loop backpressure.
         context = self._context
@@ -1668,7 +1688,15 @@ class ProcessTaskWorkflow(PostHogWorkflow):
                 "artifact_count": len(artifact_ids or []),
             },
         )
-        pending_followup = PendingFollowup(message=message, artifact_ids=artifact_ids or [])
+        message_context = message_context if isinstance(message_context, dict) else {}
+        actor_slack_user_id = message_context.get("actor_slack_user_id")
+        pending_followup = PendingFollowup(
+            message=message,
+            artifact_ids=artifact_ids or [],
+            actor_user_id=actor_user_id,
+            message_id=message_id,
+            actor_slack_user_id=actor_slack_user_id if isinstance(actor_slack_user_id, str) else None,
+        )
         # Always queue. `deprecate_patch` accepts existing non-deprecated
         # markers from workflows that ran the prior `workflow.patched(...)`
         # gate, so this is safe to deploy alongside in-flight workflows. The
@@ -1723,7 +1751,14 @@ class ProcessTaskWorkflow(PostHogWorkflow):
             },
         )
 
-    async def _send_followup_to_sandbox(self, message: str | None, artifact_ids: list[str]) -> None:
+    async def _send_followup_to_sandbox(
+        self,
+        message: str | None,
+        artifact_ids: list[str],
+        actor_user_id: int | None = None,
+        message_id: str | None = None,
+        actor_slack_user_id: str | None = None,
+    ) -> None:
         workflow.logger.info(
             "send_followup_dispatch_begin",
             extra={
@@ -1740,7 +1775,9 @@ class ProcessTaskWorkflow(PostHogWorkflow):
                     message=message,
                     posthog_mcp_scopes=self._posthog_mcp_scopes,
                     artifact_ids=artifact_ids,
-                    message_id=str(workflow.uuid4()),
+                    message_id=message_id or str(workflow.uuid4()),
+                    actor_user_id=actor_user_id,
+                    actor_slack_user_id=actor_slack_user_id,
                 ),
                 start_to_close_timeout=timedelta(minutes=35),
                 # The activity heartbeats while blocked on the sync delivery
