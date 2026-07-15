@@ -5,12 +5,22 @@ import { IconMicrosoftTeams, IconSlack } from 'lib/lemon-ui/icons'
 
 import type { TicketChannel, TicketChannelDetail } from '../../types'
 
-const channelIcon: Record<TicketChannel, JSX.Element> = {
+export const channelIcon: Record<TicketChannel, JSX.Element> = {
     widget: <IconComment />,
     slack: <IconSlack />,
     teams: <IconMicrosoftTeams />,
     email: <IconLetter />,
     github: <IconGithub />,
+}
+
+export function getReplyPlaceholder(channel?: TicketChannel): string {
+    if (channel === 'slack') {
+        return 'Reply in Slack...'
+    }
+    if (channel === 'teams') {
+        return 'Reply in Microsoft Teams...'
+    }
+    return 'Type your message...'
 }
 
 const channelDetailLabel: Record<TicketChannelDetail, string> = {

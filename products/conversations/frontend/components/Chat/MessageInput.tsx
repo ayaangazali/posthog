@@ -6,12 +6,16 @@ import { LemonButton, LemonCheckbox, Tooltip } from '@posthog/lemon-ui'
 
 import { RichContentEditorType } from 'lib/components/RichContentEditor/types'
 
+import type { TicketChannel } from '../../types'
+import { channelIcon, getReplyPlaceholder } from '../Channels/ChannelsTag'
 import { SupportEditor, serializeToMarkdown } from '../Editor'
 
 export interface MessageInputProps {
     onSendMessage: (content: string, richContent: JSONContent | null, isPrivate: boolean, onSuccess: () => void) => void
     messageSending: boolean
     placeholder?: string
+    /** Channel the ticket came from; drives the default placeholder and the send-button logo */
+    channel?: TicketChannel
     buttonText?: string
     minRows?: number
     /** Whether to show the "Send as private" checkbox */
@@ -33,7 +37,8 @@ export interface MessageInputProps {
 export function MessageInput({
     onSendMessage,
     messageSending,
-    placeholder = 'Type your message...',
+    placeholder,
+    channel,
     buttonText = 'Send',
     minRows = 3,
     showPrivateOption = false,
@@ -56,6 +61,9 @@ export function MessageInput({
     // Support controlled or uncontrolled isPrivate
     const isPrivate = controlledIsPrivate ?? localIsPrivate
     const setIsPrivate = onPrivateChange ?? setLocalIsPrivate
+
+    const resolvedPlaceholder = placeholder ?? (isPrivate ? 'Type your private note...' : getReplyPlaceholder(channel))
+    const showChannelLogo = !isPrivate && (channel === 'slack' || channel === 'teams')
 
     const handleSubmit = (): void => {
         // Guards the Cmd+Enter path too, not just the (disabled) button
@@ -89,7 +97,7 @@ export function MessageInput({
         <div>
             <SupportEditor
                 initialContent={draftContent}
-                placeholder={placeholder}
+                placeholder={resolvedPlaceholder}
                 onCreate={(editor) => {
                     editorRef.current = editor
                     if (draftContent) {
@@ -138,7 +146,16 @@ export function MessageInput({
                                     : undefined
                         }
                     >
-                        {isPrivate ? 'Attach' : buttonText}
+                        {isPrivate ? (
+                            'Attach'
+                        ) : showChannelLogo ? (
+                            <span className="inline-flex items-center gap-1.5">
+                                {buttonText}
+                                <span className="text-sm">{channelIcon[channel]}</span>
+                            </span>
+                        ) : (
+                            buttonText
+                        )}
                     </LemonButton>
                 </div>
             </div>
