@@ -1627,6 +1627,13 @@ _PROTECTED_RUN_STATE_KEYS = frozenset(
         "cancel_requested_by_user_id",
         "cancel_source",
         "cancel_fallback_cleanup_complete",
+        # Loop provenance is stamped once at run creation (see loop_runs._create_loop_task_and_run)
+        # and drives loop bookkeeping in handle_loop_run_terminal. A run update must never be able
+        # to forge or repoint it, or a caller could steer terminal side effects at another loop.
+        "loop_id",
+        "loop_trigger_id",
+        "trigger_context",
+        "config_snapshot",
     }
 )
 
