@@ -7,7 +7,7 @@ import { LemonButton, LemonCheckbox, Tooltip } from '@posthog/lemon-ui'
 import { RichContentEditorType } from 'lib/components/RichContentEditor/types'
 
 import type { TicketChannel } from '../../types'
-import { channelIcon, getReplyPlaceholder } from '../Channels/ChannelsTag'
+import { channelIcon, getReplyPlaceholder, hasReplyChannelBranding } from '../Channels/ChannelsTag'
 import { SupportEditor, serializeToMarkdown } from '../Editor'
 
 export interface MessageInputProps {
@@ -63,7 +63,7 @@ export function MessageInput({
     const setIsPrivate = onPrivateChange ?? setLocalIsPrivate
 
     const resolvedPlaceholder = placeholder ?? (isPrivate ? 'Type your private note...' : getReplyPlaceholder(channel))
-    const showChannelLogo = !isPrivate && (channel === 'slack' || channel === 'teams')
+    const showChannelLogo = !isPrivate && hasReplyChannelBranding(channel)
 
     const handleSubmit = (): void => {
         // Guards the Cmd+Enter path too, not just the (disabled) button
