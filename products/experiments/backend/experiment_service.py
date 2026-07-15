@@ -94,7 +94,6 @@ from products.feature_flags.backend.facade.filters import (
     set_holdout,
     strip_group_cohort_restriction,
 )
-from products.feature_flags.backend.facade.rules import experiment_rule_from_filters
 from products.feature_flags.backend.models.evaluation_context import FeatureFlagEvaluationContext
 from products.feature_flags.backend.models.feature_flag import FeatureFlag
 from products.notifications.backend.facade.api import (
@@ -1187,7 +1186,7 @@ class ExperimentService:
 
         if existing_flag:
             self._validate_existing_flag(existing_flag)
-            variants = experiment_rule_from_filters(existing_flag.filters or {}).variants or list(DEFAULT_VARIANTS)
+            variants = existing_flag.variants or list(DEFAULT_VARIANTS)
             return existing_flag, variants
 
         config = feature_flag_config or {}
@@ -1243,7 +1242,7 @@ class ExperimentService:
 
     def _validate_existing_flag(self, feature_flag: FeatureFlag) -> None:
         """Validate that an existing feature flag is suitable for experiment use."""
-        variants = feature_flag.filters.get("multivariate", {}).get("variants", [])
+        variants = feature_flag.variants
 
         if len(variants) < 2:
             raise ValidationError("Feature flag must have at least 2 variants (control and at least one test variant)")
@@ -2481,11 +2480,10 @@ class ExperimentService:
         if request is not None:
             update_flag(flag, {"filters": stripped_filters}, team=self.team, user=self.user, request=request)
         else:
-            # FeatureFlagSerializer needs a real request for its context; for non-HTTP callers
-            # write directly — flag caches still refresh via model save signals, only the flag's
-            # activity-log entry is skipped.
-            flag.filters = stripped_filters
-            flag.save(update_fields=["filters"])
+            # Non-HTTP callers have no acting user: a system write (user=None) skips the
+            # approval gate — this runs inside the caller's transaction, where an
+            # ApprovalRequired could never surface as a 409/change request anyway.
+            update_flag(flag, {"filters": stripped_filters}, team=self.team, user=None)
 
         flag.refresh_from_db()
         experiment.feature_flag = flag
