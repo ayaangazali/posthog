@@ -2,6 +2,7 @@ from posthog.test.base import APIBaseTest
 from unittest.mock import patch
 
 from parameterized import parameterized
+from rest_framework import status
 from rest_framework.exceptions import ValidationError
 
 from posthog.constants import AvailableFeature
@@ -18,6 +19,7 @@ from products.feature_flags.backend.facade.api import (
     ship_variant,
     update_flag,
 )
+from products.feature_flags.backend.facade.filters import set_feature_enrollment
 from products.feature_flags.backend.facade.rules import ExperimentRuleConfig, HoldoutRef, experiment_rule_from_filters
 from products.feature_flags.backend.models.feature_flag import FeatureFlag
 
@@ -281,6 +283,94 @@ class TestRollOutVariant:
         assert result["groups"][1:] == [{"properties": [], "rollout_percentage": 100}]
         assert result["payloads"] == current_filters["payloads"]
         assert result["aggregation_group_type_index"] == 1
+
+
+class TestEarlyAccessFeatureSystemWrites(APIBaseTest):
+    # Early access destroy/deactivate clear the linked flag's enrollment as facade system
+    # writes, so they must succeed untouched by any enabled flag approval policy.
+    @parameterized.expand(
+        [
+            ("destroy", "delete", status.HTTP_204_NO_CONTENT),
+            ("demote_to_concept", "patch", status.HTTP_200_OK),
+        ]
+    )
+    @patch("products.approvals.backend.decorators._is_approvals_enabled", return_value=True)
+    def test_destroy_and_demote_never_require_approval(self, _name, method, expected_status, _mock_enabled):
+        response = self.client.post(
+            f"/api/projects/{self.team.id}/early_access_feature/",
+            data={"name": "Gated feature", "stage": "beta"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_201_CREATED, response.json()
+        feature_id = response.json()["id"]
+        flag = FeatureFlag.objects.get(team=self.team, key="gated-feature")
+        assert flag.has_feature_enrollment
+
+        self.organization.available_product_features = [
+            {"key": AvailableFeature.APPROVALS, "name": AvailableFeature.APPROVALS}
+        ]
+        self.organization.save()
+        ApprovalPolicy.objects.create(
+            organization=self.organization,
+            team=self.team,
+            action_key="feature_flag.update",
+            conditions={},
+            approver_config={"quorum": 1, "users": [self.user.id]},
+            created_by=self.user,
+        )
+
+        url = f"/api/projects/{self.team.id}/early_access_feature/{feature_id}"
+        if method == "delete":
+            response = self.client.delete(f"{url}/")
+        else:
+            response = self.client.patch(url, data={"stage": "concept"}, format="json")
+
+        assert response.status_code == expected_status
+        flag.refresh_from_db()
+        assert not flag.has_feature_enrollment
+        assert not ChangeRequest.objects.filter(team=self.team).exists()
+
+
+class TestSetFeatureEnrollment:
+    @parameterized.expand(
+        [
+            (
+                "enroll_pops_super_groups",
+                {
+                    "groups": [{"properties": [], "rollout_percentage": 50}],
+                    "super_groups": [{"properties": [], "rollout_percentage": 100}],
+                    "payloads": {"true": '"p"'},
+                },
+                True,
+                None,
+                {
+                    "groups": [{"properties": [], "rollout_percentage": 50}],
+                    "payloads": {"true": '"p"'},
+                    "feature_enrollment": True,
+                },
+            ),
+            (
+                "clear_writes_none_marker_not_removal",
+                {"groups": [{"properties": [], "rollout_percentage": 50}], "feature_enrollment": True},
+                None,
+                None,
+                {"groups": [{"properties": [], "rollout_percentage": 50}], "feature_enrollment": None},
+            ),
+            (
+                "groups_override_replaces_release_conditions",
+                {
+                    "groups": [{"properties": [], "rollout_percentage": 0}],
+                    "feature_enrollment": True,
+                    "super_groups": [],
+                },
+                None,
+                [{"properties": [], "rollout_percentage": 100}],
+                {"groups": [{"properties": [], "rollout_percentage": 100}], "feature_enrollment": None},
+            ),
+        ]
+    )
+    def test_transform(self, _name, current_filters, enrolled, groups, expected):
+        assert set_feature_enrollment(current_filters, enrolled, groups=groups) == expected
 
 
 class TestExperimentRuleFromFilters:
