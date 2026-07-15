@@ -1,4 +1,4 @@
-import { afterMount, kea, key, path, props, selectors } from 'kea'
+import { actions, afterMount, kea, key, listeners, path, props, reducers, selectors } from 'kea'
 import { loaders } from 'kea-loaders'
 
 import api from 'lib/api'
@@ -9,6 +9,7 @@ import {
     MCPToolDailyStatItem,
     MCPToolDescriptionItem,
     MCPToolFailureItem,
+    MCPToolFailureOccurrenceItem,
     MCPToolNeighborItem,
     MCPToolSampleIntentItem,
     MCPToolStatsItem,
@@ -120,6 +121,10 @@ export const mcpAnalyticsToolDetailLogic = kea<mcpAnalyticsToolDetailLogicType>(
     key((props: MCPAnalyticsToolDetailLogicProps) => props.toolName),
     props({} as MCPAnalyticsToolDetailLogicProps),
 
+    actions({
+        selectFailure: (bucket: MCPToolFailureItem | null) => ({ bucket }),
+    }),
+
     loaders(({ props }) => ({
         summary: [
             null as ToolSummary | null,
@@ -200,16 +205,33 @@ export const mcpAnalyticsToolDetailLogic = kea<mcpAnalyticsToolDetailLogicType>(
                 },
             },
         ],
-        failureRows: [
-            [] as ResultRows,
+        failureBuckets: [
+            [] as MCPToolFailureItem[],
             {
-                loadFailureRows: async (): Promise<ResultRows> => {
+                loadFailureBuckets: async (): Promise<MCPToolFailureItem[]> => {
                     const response = (await api.query({
                         kind: NodeKind.MCPToolFailuresQuery,
                         toolName: props.toolName,
                         dateRange: windowDays(7),
                     })) as { results?: MCPToolFailureItem[] }
-                    return (response?.results ?? []).map((r) => [r.message, r.occurrences, r.last_seen, r.harnesses])
+                    return response?.results ?? []
+                },
+            },
+        ],
+        failureOccurrences: [
+            [] as MCPToolFailureOccurrenceItem[],
+            {
+                loadFailureOccurrences: async (bucket: MCPToolFailureItem): Promise<MCPToolFailureOccurrenceItem[]> => {
+                    const response = (await api.query({
+                        kind: NodeKind.MCPToolFailureOccurrencesQuery,
+                        toolName: props.toolName,
+                        // Raw bucket parts, not the composed label — the backend normalizes them the
+                        // same way it grouped the failures table, so the bucket round-trips exactly.
+                        errorType: bucket.error_type,
+                        errorStatus: bucket.error_status || undefined,
+                        dateRange: windowDays(7),
+                    })) as { results?: MCPToolFailureOccurrenceItem[] }
+                    return response?.results ?? []
                 },
             },
         ],
@@ -282,6 +304,28 @@ export const mcpAnalyticsToolDetailLogic = kea<mcpAnalyticsToolDetailLogicType>(
         ],
     })),
 
+    reducers({
+        selectedFailure: [
+            null as MCPToolFailureItem | null,
+            {
+                selectFailure: (_, { bucket }) => bucket,
+            },
+        ],
+        // Reset on every (de)selection so a newly opened bucket shows the loading skeleton
+        // instead of the previous bucket's rows.
+        failureOccurrences: {
+            selectFailure: () => [],
+        },
+    }),
+
+    listeners(({ actions }) => ({
+        selectFailure: ({ bucket }) => {
+            if (bucket) {
+                actions.loadFailureOccurrences(bucket)
+            }
+        },
+    })),
+
     selectors({
         toolName: [() => [(_, props) => props.toolName], (toolName: string) => toolName],
 
@@ -296,7 +340,7 @@ export const mcpAnalyticsToolDetailLogic = kea<mcpAnalyticsToolDetailLogicType>(
         actions.loadDescriptions()
         actions.loadIntentCoverage()
         actions.loadDailyStats()
-        actions.loadFailureRows()
+        actions.loadFailureBuckets()
         actions.loadSampleIntentRows()
         actions.loadNeighborsBeforeRows()
         actions.loadNeighborsAfterRows()
