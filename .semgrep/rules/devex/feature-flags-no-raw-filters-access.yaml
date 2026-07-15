@@ -34,7 +34,6 @@ rules:
               # Baseline: pre-existing offenders being migrated behind the flag
               # facade. Shrink this list — never grow it.
               - '/ee/hogai/context/experiment/context.py'
-              - '/posthog/api/web_experiment.py'
               - '/posthog/management/commands/fix_invalid_flag_property_types.py'
               - '/posthog/models/product_intent/product_intent.py'
               - '/posthog/tasks/update_survey_adaptive_sampling.py'
