@@ -2,6 +2,7 @@ import time
 from collections.abc import Sequence
 from decimal import Decimal
 from enum import StrEnum
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from django.conf import settings
@@ -27,6 +28,9 @@ from products.error_tracking.backend.sql import (
     INSERT_ERROR_TRACKING_FINGERPRINT_ISSUE_STATE,
     INSERT_ERROR_TRACKING_ISSUE_FINGERPRINT_OVERRIDES,
 )
+
+if TYPE_CHECKING:
+    from posthog.models.team import Team
 
 logger = structlog.get_logger(__name__)
 
@@ -750,6 +754,24 @@ def sync_autocapture_opt_in(team_id: int, opt_in: bool | None) -> None:
         )
     else:
         ErrorTrackingSettings.objects.filter(team_id=team_id).update(autocapture_exceptions_opt_in=opt_in)
+
+
+def autocapture_exceptions_enabled(team: "Team") -> bool:
+    """Whether exception autocapture is opted in, read from ErrorTrackingSettings.
+
+    Phase 2 of the move off Team: reads come from ErrorTrackingSettings. The Team column is
+    still dual-written by the signal, so falling back to it keeps historical teams whose
+    backfill row hasn't landed yet correct and makes the read cutover reversible. A missing
+    row (or a null value) falls back to Team, which reads as disabled for never-opted teams.
+    """
+    mirrored = (
+        ErrorTrackingSettings.objects.filter(team_id=team.id)
+        .values_list("autocapture_exceptions_opt_in", flat=True)
+        .first()
+    )
+    if mirrored is not None:
+        return mirrored
+    return bool(team.autocapture_exceptions_opt_in)
 
 
 class ErrorTrackingSpikeEvent(UUIDModel):

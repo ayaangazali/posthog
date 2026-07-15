@@ -16,6 +16,7 @@ from posthog.event_usage import groups
 from .. import logic, weekly_digest
 from ..models import (
     ErrorTrackingIssue,
+    autocapture_exceptions_enabled as autocapture_exceptions_enabled,
     override_error_tracking_issue_fingerprint as override_error_tracking_issue_fingerprint,
     resolve_fingerprints_for_issues,
     sync_issues_to_clickhouse as sync_issues_to_clickhouse,
