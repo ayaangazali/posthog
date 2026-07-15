@@ -735,7 +735,8 @@ class ErrorTrackingSettings(models.Model):
     project_rate_limit_bucket_size_minutes = models.IntegerField(null=True, blank=True)
     per_issue_rate_limit_value = models.IntegerField(null=True, blank=True)
     per_issue_rate_limit_bucket_size_minutes = models.IntegerField(null=True, blank=True)
-    # Nullable mirrors the source Team.autocapture_exceptions_opt_in during the move; null == disabled.
+    # Read source of truth; Team.autocapture_exceptions_opt_in is still dual-written onto it
+    # during the move. Null == disabled.
     autocapture_exceptions_opt_in = models.BooleanField(null=True, blank=True)
 
     class Meta:
@@ -759,19 +760,16 @@ def sync_autocapture_opt_in(team_id: int, opt_in: bool | None) -> None:
 def autocapture_exceptions_enabled(team: "Team") -> bool:
     """Whether exception autocapture is opted in, read from ErrorTrackingSettings.
 
-    Phase 2 of the move off Team: reads come from ErrorTrackingSettings. The Team column is
-    still dual-written by the signal, so falling back to it keeps historical teams whose
-    backfill row hasn't landed yet correct and makes the read cutover reversible. A missing
-    row (or a null value) falls back to Team, which reads as disabled for never-opted teams.
+    ErrorTrackingSettings is the sole read source: opted-in teams were backfilled, so the
+    Team column is no longer consulted (it's still dual-written for rust, the API
+    serializers, and the frontend toggle until a later phase). A missing row or a null
+    value reads as disabled.
     """
-    mirrored = (
+    return bool(
         ErrorTrackingSettings.objects.filter(team_id=team.id)
         .values_list("autocapture_exceptions_opt_in", flat=True)
         .first()
     )
-    if mirrored is not None:
-        return mirrored
-    return bool(team.autocapture_exceptions_opt_in)
 
 
 class ErrorTrackingSpikeEvent(UUIDModel):

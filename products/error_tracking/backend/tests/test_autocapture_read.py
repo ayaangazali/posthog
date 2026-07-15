@@ -13,7 +13,7 @@ class TestAutocaptureExceptionsEnabled(BaseTest):
     def _team(self, *, team_value: bool | None, ets_value: object) -> Team:
         # Build a team with independent Team and ErrorTrackingSettings values. Create the team
         # opted-out so the signal writes no row, then set each side directly (queryset update
-        # bypasses the signal) so the two can disagree — which is what the accessor arbitrates.
+        # bypasses the signal) so the two can disagree — proving Team is never consulted.
         team = Team.objects.create(organization=self.organization)
         Team.objects.filter(id=team.id).update(autocapture_exceptions_opt_in=team_value)
         if ets_value is not NO_ROW:
@@ -25,17 +25,15 @@ class TestAutocaptureExceptionsEnabled(BaseTest):
 
     @parameterized.expand(
         [
-            # The mirror is the source of truth and wins over a disagreeing Team value.
-            ("mirror_true_wins_over_team_false", False, True, True),
-            ("mirror_false_wins_over_team_true", True, False, False),
-            # No mirror row yet (historical team pre-backfill): fall back to Team so it stays correct.
-            ("fallback_to_team_true_when_no_row", True, NO_ROW, True),
-            ("fallback_to_team_false_when_no_row", False, NO_ROW, False),
+            # ErrorTrackingSettings is the sole read source; a disagreeing Team value is ignored.
+            ("settings_true_wins_over_team_false", False, True, True),
+            ("settings_false_wins_over_team_true", True, False, False),
+            # Backfill landed: no row (or a null value) reads as disabled even if Team says opted in.
+            ("no_row_reads_disabled_despite_team_true", True, NO_ROW, False),
+            ("null_value_reads_disabled_despite_team_true", True, None, False),
         ]
     )
-    def test_reads_mirror_with_team_fallback(
-        self, _name: str, team_value: bool | None, ets_value: object, expected: bool
-    ):
+    def test_reads_settings_only(self, _name: str, team_value: bool | None, ets_value: object, expected: bool):
         team = self._team(team_value=team_value, ets_value=ets_value)
 
         assert autocapture_exceptions_enabled(team) is expected
