@@ -135,6 +135,10 @@ class Task(FileSystemSyncMixin, DeletedMetaFields, models.Model):
         # ReviewHog PR reviewer — its sandbox steps (chunking/review/validation/dedup) spawn one task each.
         REVIEW_HOG = "review_hog", "ReviewHog"
         IMAGE_BUILDER = "image_builder", "Image Builder"
+        # A human @-mentioned the PostHog bot on a Signals-created PR to address review feedback.
+        # Distinct from SIGNAL_REPORT so the follow-up run authors commits as the mentioning user
+        # (SIGNAL_REPORT forces bot authorship) while still linking back to the originating report.
+        GITHUB_MENTION = "github_mention", "GitHub Mention"
 
     # nosemgrep: prefer-uuid7-django-pk -- TODO: migrate to uuid7 or clarify intent
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
