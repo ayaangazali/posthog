@@ -8,8 +8,12 @@ import {
     LoopsListQueryParams,
     LoopsPartialUpdateBody,
     LoopsPartialUpdateParams,
+    LoopsPreviewCreateBody,
+    LoopsPreviewCreateParams,
     LoopsRetrieveParams,
     LoopsRunCreateParams,
+    LoopsRunsRetrieveParams,
+    LoopsRunsRetrieveQueryParams,
     TasksListQueryParams,
     TasksRetrieveParams,
     TasksRunsListParams,
@@ -34,6 +38,9 @@ const loopsCreate = (): ToolBase<typeof LoopsCreateSchema, Schemas.LoopDTO> => (
         }
         if (params.description !== undefined) {
             body['description'] = params.description
+        }
+        if (params.take_ownership !== undefined) {
+            body['take_ownership'] = params.take_ownership
         }
         if (params.visibility !== undefined) {
             body['visibility'] = params.visibility
@@ -70,6 +77,9 @@ const loopsCreate = (): ToolBase<typeof LoopsCreateSchema, Schemas.LoopDTO> => (
         }
         if (params.notifications !== undefined) {
             body['notifications'] = params.notifications
+        }
+        if (params.context_target !== undefined) {
+            body['context_target'] = params.context_target
         }
         if (params.triggers !== undefined) {
             body['triggers'] = params.triggers
@@ -133,6 +143,9 @@ const loopsPartialUpdate = (): ToolBase<typeof LoopsPartialUpdateSchema, Schemas
         if (params.description !== undefined) {
             body['description'] = params.description
         }
+        if (params.take_ownership !== undefined) {
+            body['take_ownership'] = params.take_ownership
+        }
         if (params.visibility !== undefined) {
             body['visibility'] = params.visibility
         }
@@ -169,6 +182,9 @@ const loopsPartialUpdate = (): ToolBase<typeof LoopsPartialUpdateSchema, Schemas
         if (params.notifications !== undefined) {
             body['notifications'] = params.notifications
         }
+        if (params.context_target !== undefined) {
+            body['context_target'] = params.context_target
+        }
         if (params.triggers !== undefined) {
             body['triggers'] = params.triggers
         }
@@ -178,6 +194,31 @@ const loopsPartialUpdate = (): ToolBase<typeof LoopsPartialUpdateSchema, Schemas
             body,
         })
         return result
+    },
+})
+
+const LoopsPreviewCreateSchema = LoopsPreviewCreateParams.omit({ project_id: true }).extend(
+    LoopsPreviewCreateBody.shape
+)
+
+const loopsPreviewCreate = (): ToolBase<typeof LoopsPreviewCreateSchema, WithPostHogUrl<Schemas.LoopPreviewDTO>> => ({
+    name: 'loops-preview-create',
+    schema: LoopsPreviewCreateSchema,
+    handler: async (context: Context, params: z.infer<typeof LoopsPreviewCreateSchema>) => {
+        const projectId = await context.stateManager.getProjectId()
+        const body: Record<string, unknown> = {}
+        if (params.trigger_type !== undefined) {
+            body['trigger_type'] = params.trigger_type
+        }
+        if (params.payload !== undefined) {
+            body['payload'] = params.payload
+        }
+        const result = await context.api.request<Schemas.LoopPreviewDTO>({
+            method: 'POST',
+            path: `/api/projects/${encodeURIComponent(String(projectId))}/loops/${encodeURIComponent(String(params.id))}/preview/`,
+            body,
+        })
+        return await withPostHogUrl(context, result, `/tasks/${result.id}/preview`)
     },
 })
 
@@ -208,6 +249,36 @@ const loopsRunCreate = (): ToolBase<typeof LoopsRunCreateSchema, Schemas.LoopFir
             path: `/api/projects/${encodeURIComponent(String(projectId))}/loops/${encodeURIComponent(String(params.id))}/run/`,
         })
         return result
+    },
+})
+
+const LoopsRunsRetrieveSchema = LoopsRunsRetrieveParams.omit({ project_id: true }).extend(
+    LoopsRunsRetrieveQueryParams.shape
+)
+
+const loopsRunsRetrieve = (): ToolBase<typeof LoopsRunsRetrieveSchema, WithPostHogUrl<Schemas.LoopRunPage>> => ({
+    name: 'loops-runs-retrieve',
+    schema: LoopsRunsRetrieveSchema,
+    handler: async (context: Context, params: z.infer<typeof LoopsRunsRetrieveSchema>) => {
+        const projectId = await context.stateManager.getProjectId()
+        const result = await context.api.request<Schemas.LoopRunPage>({
+            method: 'GET',
+            path: `/api/projects/${encodeURIComponent(String(projectId))}/loops/${encodeURIComponent(String(params.id))}/runs/`,
+            query: {
+                cursor: params.cursor,
+                limit: params.limit,
+            },
+        })
+        return await withPostHogUrl(
+            context,
+            {
+                ...result,
+                results: await Promise.all(
+                    (result.results ?? []).map((item) => withPostHogUrl(context, item, `/tasks/${item.id}/runs`))
+                ),
+            },
+            '/tasks'
+        )
     },
 })
 
@@ -380,8 +451,10 @@ export const GENERATED_TOOLS: Record<string, () => ToolBase<ZodObjectAny>> = {
     'loops-destroy': loopsDestroy,
     'loops-list': loopsList,
     'loops-partial-update': loopsPartialUpdate,
+    'loops-preview-create': loopsPreviewCreate,
     'loops-retrieve': loopsRetrieve,
     'loops-run-create': loopsRunCreate,
+    'loops-runs-retrieve': loopsRunsRetrieve,
     'tasks-list': tasksList,
     'tasks-retrieve': tasksRetrieve,
     'tasks-runs-list': tasksRunsList,
