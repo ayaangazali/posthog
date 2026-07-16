@@ -60,7 +60,22 @@ Default columns: `name`, `tag_names`, `notebook_count`, plus one relationship co
 
 **Custom property columns** surface the team's `CustomPropertyDefinition`s (loaded in `accountsColumnConfigLogic` via the generated `customPropertyDefinitionsList`) as a "Custom properties" picker group. Each is selected as ``accounts.custom_properties.values.`<definition-id>` AS cp_<id>`` — a JSON dot-access through the `custom_properties` lazy join on `system.accounts` (backed by the `customer_analytics_custompropertyvalue` EAV table; one JOIN regardless of column count). Because the alias is an opaque `cp_<id>`, every label-bearing surface must resolve it back via the `aliasToDefinition` selector: the table header (`useContextColumns` in `AccountsHogQLTable`) and the configurator's "Visible columns" list (`SelectedAccountColumn`). Cells render by display type (`CustomPropertyCell`: date→`TZLabel`, boolean→icon, select→`LemonColorGlyph` + label, numeric→`formatCustomPropertyValue`). v1 is display-only with lexical sort (the JSON value is a string). Numeric custom properties (display type `number`/`currency`/`percent`) are also selectable in the **overview tiles** sum/avg/threshold pickers — `numericColumnOptions` recognizes the display type and wraps the (string) value in `toFloatOrNull(...)` so aggregation is numeric.
 
-Sort safety: removing the sorted column drops the sort (`clearSortIfColumnRemoved`), else the backend gets an `orderBy` referencing a missing alias.
+### Sorting (hybrid client / server)
+
+Clicking a column header toggles `accountsLogic.sortOrder` (asc → desc → off, `toggleSort`).
+How that sort is applied depends on whether the whole matching set is already loaded, tracked by the `canSortClientSide` selector (`!listHasMoreData && !listPaginated`):
+
+- **Fully loaded (the common case — one page, no "Load more"):** `canSortClientSide` is true.
+  The list query carries **no** `orderBy`, so toggling a header does not change the query and never refetches.
+  Instead `AccountsHogQLTable` reorders the loaded rows in the browser via the DataTable's `dataTableRowsTransformer` context seam, calling `sortAccountRows` (in `accountsSort.ts`) — sorting is instant.
+  `sortAccountRows` reads each cell by its position in the row's result array (the name tuple sorts by `.name`, relationship/tag arrays join to a string, numbers sort numerically), is stable, and always sinks empty cells to the bottom in both directions.
+- **Paginated (more rows than one page):** `canSortClientSide` is false, so the query carries an `orderBy` and ClickHouse sorts the **entire** set and returns the globally-correct top page; the transformer is inactive (rows are shown in server order). Toggling a header refetches, as before.
+
+`listPaginated` is what makes this safe: it is set when the user pages past the first page (`loadNextData`, connected from the list `dataNodeLogic`) and reset on every fresh load (`loadData`).
+Without it, paging to the end of a large list would flip `listHasMoreData` to false mid-session, drop the `orderBy`, and reset the query back to page one — discarding the accumulated rows.
+Resetting on fresh load lets a filtered-down set (now ≤ one page) return to instant client-side sort.
+
+Sort safety: removing the sorted column drops the sort (`clearSortIfColumnRemoved`); otherwise a server-side sort would reference a missing SELECT alias.
 
 ## The expanded row
 
