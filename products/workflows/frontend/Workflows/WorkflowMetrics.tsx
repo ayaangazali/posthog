@@ -4,7 +4,7 @@ import { useMemo } from 'react'
 
 import * as greekPng from '@posthog/brand/hoggies/png/greek'
 import { IconLetter } from '@posthog/icons'
-import { LemonButton, LemonCollapse, LemonSelect, ProfilePicture, Spinner } from '@posthog/lemon-ui'
+import { LemonButton, LemonCollapse, LemonSelect, LemonSelectOptions, ProfilePicture, Spinner } from '@posthog/lemon-ui'
 
 import { pngHoggie } from 'lib/brand/hoggies'
 import { getColorVar } from 'lib/colors'
@@ -88,11 +88,10 @@ function WorkflowRunMetrics(props: WorkflowLogicProps): JSX.Element {
         [appMetricsTrends]
     )
 
-    const workflowStepOptions = useMemo(
+    const workflowStepOptions: LemonSelectOptions<string> = useMemo(
         () => [
             {
-                label: 'Whole workflow',
-                value: OVERVIEW_OPTION_VALUE,
+                options: [{ label: 'Whole workflow', value: OVERVIEW_OPTION_VALUE }],
             },
             {
                 // A titled section makes it obvious you can drill into a single step's metrics.
@@ -251,11 +250,10 @@ function BatchJobMetrics({ job }: { job: HogFlowBatchJob }): JSX.Element {
         [appMetricsTrends]
     )
 
-    const workflowStepOptions = useMemo(
+    const workflowStepOptions: LemonSelectOptions<string> = useMemo(
         () => [
             {
-                label: 'Whole workflow',
-                value: OVERVIEW_OPTION_VALUE,
+                options: [{ label: 'Whole workflow', value: OVERVIEW_OPTION_VALUE }],
             },
             {
                 // A titled section makes it obvious you can drill into a single step's metrics.
