@@ -75,6 +75,13 @@ WAREHOUSE_SOURCES_DATABASE_URL: str = (
     os.getenv("WAREHOUSE_SOURCES_DATABASE_URL") or PRODUCT_DB_WRITER_URLS.get("warehouse_sources_queue") or DATABASE_URL
 )
 
+# Cap on bytes a single data-modeling materialization query may read from ClickHouse storage.
+# Materialization is unattended background load that retries on failure, so it should be at least
+# as strict as the FULL emergency kill-switch level (1 TB). 0 disables the cap.
+DATA_MODELING_MATERIALIZATION_MAX_BYTES_TO_READ = get_from_env(
+    "DATA_MODELING_MATERIALIZATION_MAX_BYTES_TO_READ", 1_000_000_000_000, type_cast=int
+)
+
 # Warehouse-pipeline and cyclotron Kafka config live in `posthog/settings/kafka.py`
 # (profiles `warehouse_sources` and `cyclotron`) — read from `settings.KAFKA_PROFILES[...]`
 # or via the back-compat top-level names that settings/kafka.py exposes.

@@ -52,6 +52,16 @@ MAX_CONCURRENT_CLICKHOUSE_QUERIES = 10
 _clickhouse_query_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CLICKHOUSE_QUERIES)
 
 
+def _materialization_query_settings() -> HogQLGlobalSettings:
+    query_settings = HogQLGlobalSettings()
+    query_settings.max_execution_time = HOGQL_INCREASED_MAX_EXECUTION_TIME
+    max_bytes_to_read = settings.DATA_MODELING_MATERIALIZATION_MAX_BYTES_TO_READ
+    if max_bytes_to_read:
+        query_settings.max_bytes_to_read = max_bytes_to_read
+        query_settings.read_overflow_mode = "throw"
+    return query_settings
+
+
 class EmptyHogQLResponseColumnsError(Exception):
     def __init__(self):
         super().__init__("After running a HogQL query, no columns were returned")
@@ -293,8 +303,7 @@ async def hogql_table(query: str, team: Team, logger: FilteringBoundLogger, view
     if query_node is None:
         raise ParsingError(f"Failed to parse query node from query, parse_select() returned None: query={query}")
 
-    settings = HogQLGlobalSettings()
-    settings.max_execution_time = HOGQL_INCREASED_MAX_EXECUTION_TIME
+    settings = _materialization_query_settings()
 
     context = HogQLContext(
         team=team,

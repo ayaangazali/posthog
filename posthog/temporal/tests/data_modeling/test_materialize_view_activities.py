@@ -11,6 +11,7 @@ import pyarrow as pa
 import deltalake
 import pytest_asyncio
 
+from posthog.settings import HOGQL_INCREASED_MAX_EXECUTION_TIME
 from posthog.sync import database_sync_to_async
 from posthog.temporal.data_modeling.activities import (
     CreateDataModelingJobInputs,
@@ -27,6 +28,7 @@ from posthog.temporal.data_modeling.activities import (
 from posthog.temporal.data_modeling.activities.materialize_view import (
     InvalidNodeTypeException,
     _get_aws_storage_options,
+    _materialization_query_settings,
 )
 
 from products.data_modeling.backend.facade.api import compute_enrichment_hash
@@ -1052,3 +1054,19 @@ class TestMaterializeViewActivity:
             )
             with pytest.raises(RuntimeError, match="boom"):
                 await activity_environment.run(materialize_view_activity, inputs)
+
+
+class TestMaterializationQuerySettings:
+    @pytest.mark.parametrize(
+        "cap,expected_bytes,expected_mode",
+        [
+            (1_000_000_000_000, 1_000_000_000_000, "throw"),
+            (0, None, None),
+        ],
+    )
+    def test_bytes_read_cap(self, cap, expected_bytes, expected_mode):
+        with override_settings(DATA_MODELING_MATERIALIZATION_MAX_BYTES_TO_READ=cap):
+            query_settings = _materialization_query_settings()
+        assert query_settings.max_execution_time == HOGQL_INCREASED_MAX_EXECUTION_TIME
+        assert query_settings.max_bytes_to_read == expected_bytes
+        assert query_settings.read_overflow_mode == expected_mode
