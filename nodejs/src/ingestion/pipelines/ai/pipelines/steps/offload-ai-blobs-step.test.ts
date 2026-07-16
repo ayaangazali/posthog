@@ -98,4 +98,25 @@ describe('offloadAiBlobsStep', () => {
         await expect(step(input)).rejects.toThrow('s3 down')
         expect((input.normalizedEvent.properties!.$ai_input as any)[0].image_url.url.startsWith('data:')).toBe(true)
     })
+
+    it('deduplicates identical blobs across multiple heavy props', async () => {
+        const store = new FakeBlobStore()
+        const step = createOffloadAiBlobsStep(store, CONFIG)
+        const imageUrl = `data:image/png;base64,${PNG_B64}`
+        const input = makeInput({
+            $ai_input: [{ image_url: { url: imageUrl } }],
+            $ai_output: [{ image_url: { url: imageUrl } }],
+        })
+        const result = await step(input)
+        if (!isOkResult(result)) {
+            throw new Error('expected ok result')
+        }
+        expect(store.stored).toHaveLength(1)
+        const storedHash = store.stored[0].hash
+        const props = result.value.normalizedEvent.properties!
+        const inputUrl = (props.$ai_input as any)[0].image_url.url as string
+        const outputUrl = (props.$ai_output as any)[0].image_url.url as string
+        expect(parseBlobPointer(inputUrl)?.hash).toBe(storedHash)
+        expect(parseBlobPointer(outputUrl)?.hash).toBe(storedHash)
+    })
 })
