@@ -71,6 +71,8 @@ export class S3BlobStore implements BlobStore {
         if (age <= this.config.touchAfterMs) {
             return 'fresh'
         }
+        // Self-copy resets the object's creation date, which the bucket's 31-day
+        // lifecycle rule keys on — every object outlives its last reference by ≥30d.
         await this.timed('copy', () =>
             this.s3.send(
                 new CopyObjectCommand({

@@ -91,6 +91,12 @@ export const aiBlobOffloadBelowFloorCounter = new Counter({
     labelNames: ['team_id'],
 })
 
+export const aiBlobOffloadBelowFloorBytes = new Counter({
+    name: 'llma_ai_blob_offload_below_floor_bytes_total',
+    help: 'Estimated decoded bytes of binary payloads left inline under the size floor',
+    labelNames: ['team_id'],
+})
+
 export const aiBlobOffloadBlobBytes = new Histogram({
     name: 'llma_ai_blob_offload_blob_bytes',
     help: 'Decoded size of offloaded blobs',

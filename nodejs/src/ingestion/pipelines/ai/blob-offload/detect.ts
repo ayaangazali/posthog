@@ -33,7 +33,7 @@ interface Extraction {
 function pointerFor(state: Extraction, base64: string, mime: string, detector: BlobDetector): string | null {
     if (base64.length < state.minBase64Length) {
         state.belowFloorCount += 1
-        state.belowFloorBytes += base64.length
+        state.belowFloorBytes += Math.floor((base64.length * 3) / 4)
         return null
     }
     const bytes = Buffer.from(base64, 'base64')

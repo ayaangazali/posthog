@@ -4,6 +4,7 @@ import { ProcessingStep } from '~/ingestion/framework/steps'
 import { BlobStore } from '~/ingestion/pipelines/ai/blob-offload/blob-store'
 import { DetectedBlob, extractBlobs } from '~/ingestion/pipelines/ai/blob-offload/detect'
 import {
+    aiBlobOffloadBelowFloorBytes,
     aiBlobOffloadBelowFloorCounter,
     aiBlobOffloadBlobBytes,
     aiBlobOffloadBlobsCounter,
@@ -46,6 +47,7 @@ export function createOffloadAiBlobsStep<T extends OffloadAiBlobsInput>(
         const rewrittenProps: Record<string, unknown> = {}
         const blobsByHash = new Map<string, DetectedBlob>()
         let belowFloorCount = 0
+        let belowFloorBytes = 0
         let bytesBefore = 0
         let bytesAfter = 0
 
@@ -56,6 +58,9 @@ export function createOffloadAiBlobsStep<T extends OffloadAiBlobsInput>(
             }
             const extraction = extractBlobs(value, { minBase64Length: config.minBase64Length })
             belowFloorCount += extraction.belowFloorCount
+            belowFloorBytes += extraction.belowFloorBytes
+            const afterBytes = Buffer.byteLength(JSON.stringify(extraction.value))
+            aiBlobOffloadTextBytes.observe(afterBytes)
             if (extraction.blobs.length === 0) {
                 continue
             }
@@ -64,13 +69,12 @@ export function createOffloadAiBlobsStep<T extends OffloadAiBlobsInput>(
             }
             rewrittenProps[key] = extraction.value
             bytesBefore += Buffer.byteLength(JSON.stringify(value))
-            const afterBytes = Buffer.byteLength(JSON.stringify(extraction.value))
             bytesAfter += afterBytes
-            aiBlobOffloadTextBytes.observe(afterBytes)
         }
 
         if (belowFloorCount > 0) {
             aiBlobOffloadBelowFloorCounter.labels(teamId).inc(belowFloorCount)
+            aiBlobOffloadBelowFloorBytes.labels(teamId).inc(belowFloorBytes)
         }
 
         if (blobsByHash.size === 0) {
@@ -79,6 +83,9 @@ export function createOffloadAiBlobsStep<T extends OffloadAiBlobsInput>(
         }
 
         const blobs = [...blobsByHash.values()]
+        // Upload-before-emit: every blob must be confirmed durable before the
+        // rewritten event exists anywhere. A failure rejects the step; the
+        // pipeline's retry option owns transient failures.
         const outcomes = await Promise.all(blobs.map((blob) => store.ensureStored(input.team.id, blob)))
 
         blobs.forEach((blob, i) => {
