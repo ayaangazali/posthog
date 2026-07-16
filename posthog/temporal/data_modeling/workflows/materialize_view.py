@@ -49,7 +49,8 @@ from products.data_modeling.backend.facade.models import DataModelingJobEngine
 
 # these indicate problems with the query or data, not transient issues
 NON_RETRYABLE_ERRORS = [
-    "CHQueryErrorMemoryLimitExceeded",
+    "ClickHouseMemoryLimitExceededError",
+    "ClickHouseTooManyBytesError",
     "CannotCoerceColumnException",
     "InvalidNodeTypeException",
     "NodeNotFoundException",

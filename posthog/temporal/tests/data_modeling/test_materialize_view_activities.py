@@ -1,3 +1,4 @@
+import contextlib
 from collections.abc import Collection, Iterable
 from typing import Any, cast
 
@@ -13,6 +14,11 @@ import pytest_asyncio
 
 from posthog.settings import HOGQL_INCREASED_MAX_EXECUTION_TIME
 from posthog.sync import database_sync_to_async
+from posthog.temporal.common.clickhouse import (
+    ClickHouseMemoryLimitExceededError,
+    ClickHouseQueryTimeoutError,
+    ClickHouseTooManyBytesError,
+)
 from posthog.temporal.data_modeling.activities import (
     CreateDataModelingJobInputs,
     FailMaterializationInputs,
@@ -26,10 +32,15 @@ from posthog.temporal.data_modeling.activities import (
     succeed_materialization_activity,
 )
 from posthog.temporal.data_modeling.activities.materialize_view import (
+    LOGGER,
+    QUERY_LOG_CLASSIFY_ATTEMPTS,
     InvalidNodeTypeException,
+    _classify_stream_failure,
     _get_aws_storage_options,
     _materialization_query_settings,
+    hogql_table,
 )
+from posthog.temporal.data_modeling.workflows.materialize_view import NON_RETRYABLE_ERRORS
 
 from products.data_modeling.backend.facade.api import compute_enrichment_hash
 from products.data_modeling.backend.facade.models import (
@@ -1070,3 +1081,128 @@ class TestMaterializationQuerySettings:
         assert query_settings.max_execution_time == HOGQL_INCREASED_MAX_EXECUTION_TIME
         assert query_settings.max_bytes_to_read == expected_bytes
         assert query_settings.read_overflow_mode == expected_mode
+
+
+class _FakeClickHouseClient:
+    """Stands in for the async ClickHouse client in stream-failure tests."""
+
+    def __init__(self, stream_error: Exception | None = None, query_log_rows: list[dict] | None = None):
+        self.stream_error = stream_error
+        self.query_log_rows = query_log_rows or []
+        self.query_log_lookups = 0
+        self.astream_query: str | None = None
+        self.astream_query_id: str | None = None
+
+    @contextlib.asynccontextmanager
+    async def apost_query(self, query, *data, query_parameters=None, query_id=None):
+        class _Response:
+            def __init__(self, body: bytes):
+                self._body = body
+                self.content = self
+
+            async def read(self) -> bytes:
+                return self._body
+
+        yield _Response(b"value\tUInt8\n")
+
+    async def astream_query_as_arrow(self, query, *data, query_parameters=None, query_id=None):
+        self.astream_query = query
+        self.astream_query_id = query_id
+        if self.stream_error is not None:
+            raise self.stream_error
+        return
+        yield  # unreachable; makes this an async generator
+
+    async def read_query_as_jsonl(self, query, *data, query_parameters=None, query_id=None):
+        self.query_log_lookups += 1
+        return self.query_log_rows
+
+
+class TestClassifyStreamFailure:
+    @pytest.mark.parametrize(
+        "exception_code,expected_error",
+        [
+            (307, ClickHouseTooManyBytesError),
+            (241, ClickHouseMemoryLimitExceededError),
+            (159, ClickHouseQueryTimeoutError),
+        ],
+    )
+    async def test_maps_known_exception_codes_to_typed_errors(self, exception_code, expected_error):
+        client = _FakeClickHouseClient(
+            query_log_rows=[{"exception_code": exception_code, "exception": f"Code: {exception_code}. boom"}]
+        )
+        typed_error = await _classify_stream_failure(client, "some-query-id")
+        assert isinstance(typed_error, expected_error)
+        assert f"Code: {exception_code}. boom" in str(typed_error)
+
+    async def test_returns_none_for_unrelated_exception_code(self):
+        client = _FakeClickHouseClient(query_log_rows=[{"exception_code": 404, "exception": "unrelated"}])
+        assert await _classify_stream_failure(client, "some-query-id") is None
+
+    async def test_polls_boundedly_then_gives_up_when_no_row_appears(self):
+        client = _FakeClickHouseClient(query_log_rows=[])
+        with unittest.mock.patch(
+            "posthog.temporal.data_modeling.activities.materialize_view.QUERY_LOG_CLASSIFY_WAIT_SECONDS", 0
+        ):
+            assert await _classify_stream_failure(client, "some-query-id") is None
+        assert client.query_log_lookups == QUERY_LOG_CLASSIFY_ATTEMPTS
+
+
+class TestHogqlTableStreamFailure:
+    async def test_stream_failure_classified_as_typed_non_retryable_error(self, ateam):
+        # regression: a bytes-cap breach mid-ArrowStream surfaced as an opaque broken-stream
+        # error, which Temporal retried, re-scanning up to the cap on every attempt.
+        client = _FakeClickHouseClient(
+            stream_error=RuntimeError("broken stream"),
+            query_log_rows=[{"exception_code": 307, "exception": "Code: 307. DB::Exception: (TOO_MANY_BYTES)"}],
+        )
+
+        @contextlib.asynccontextmanager
+        async def fake_get_client(**kwargs):
+            yield client
+
+        logger = LOGGER.bind()
+        with unittest.mock.patch(
+            "posthog.temporal.data_modeling.activities.materialize_view.get_clickhouse_client", fake_get_client
+        ):
+            with pytest.raises(ClickHouseTooManyBytesError) as exc_info:
+                async for _ in hogql_table("SELECT 1", ateam, logger):
+                    pass
+
+        assert "TOO_MANY_BYTES" in str(exc_info.value)
+        assert exc_info.value.__cause__ is client.stream_error
+        # the data query must carry a query_id (the classifier's lookup key) and the bytes cap
+        assert client.astream_query_id
+        assert client.astream_query is not None
+        assert "max_bytes_to_read" in client.astream_query
+
+    async def test_unattributable_stream_failure_reraises_original(self, ateam):
+        client = _FakeClickHouseClient(stream_error=RuntimeError("broken stream"), query_log_rows=[])
+
+        @contextlib.asynccontextmanager
+        async def fake_get_client(**kwargs):
+            yield client
+
+        logger = LOGGER.bind()
+        with (
+            unittest.mock.patch(
+                "posthog.temporal.data_modeling.activities.materialize_view.get_clickhouse_client", fake_get_client
+            ),
+            unittest.mock.patch(
+                "posthog.temporal.data_modeling.activities.materialize_view.QUERY_LOG_CLASSIFY_WAIT_SECONDS", 0
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="broken stream"):
+                async for _ in hogql_table("SELECT 1", ateam, logger):
+                    pass
+
+
+def test_non_retryable_errors_reference_real_v2_exception_names():
+    # Temporal matches non-retryable errors by exception class name; a rename or list
+    # regression silently reverts memory-limit/bytes-cap failures to being retried 3x.
+    import posthog.temporal.common.clickhouse as clickhouse_module
+
+    for name in ("ClickHouseTooManyBytesError", "ClickHouseMemoryLimitExceededError"):
+        assert name in NON_RETRYABLE_ERRORS
+        assert hasattr(clickhouse_module, name)
+    assert "CHQueryErrorMemoryLimitExceeded" not in NON_RETRYABLE_ERRORS

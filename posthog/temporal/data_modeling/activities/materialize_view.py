@@ -26,7 +26,13 @@ from posthog.models import Team
 from posthog.settings import HOGQL_INCREASED_MAX_EXECUTION_TIME
 from posthog.settings.base_variables import TEST
 from posthog.sync import database_sync_to_async_pool
-from posthog.temporal.common.clickhouse import get_client as get_clickhouse_client
+from posthog.temporal.common.clickhouse import (
+    ClickHouseError,
+    ClickHouseMemoryLimitExceededError,
+    ClickHouseQueryTimeoutError,
+    ClickHouseTooManyBytesError,
+    get_client as get_clickhouse_client,
+)
 from posthog.temporal.common.heartbeat import Heartbeater
 from posthog.temporal.common.logger import get_logger
 
@@ -50,6 +56,74 @@ QUEUE_POLL_SECONDS = 1.0
 # module-level semaphore gates every activity on the same worker.
 MAX_CONCURRENT_CLICKHOUSE_QUERIES = 10
 _clickhouse_query_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CLICKHOUSE_QUERIES)
+
+
+# system.query_log rows flush asynchronously (~7.5s by default), so a lookup issued right
+# after a stream breaks usually finds nothing. Poll briefly: seconds against an already-failed
+# activity, versus terabyte-scale retry reads if a cap breach stays untyped and retryable.
+QUERY_LOG_CLASSIFY_ATTEMPTS = 4
+QUERY_LOG_CLASSIFY_WAIT_SECONDS = 5.0
+
+_QUERY_LOG_EXCEPTION_CODE_TO_ERROR: dict[int, type[ClickHouseError]] = {
+    307: ClickHouseTooManyBytesError,
+    241: ClickHouseMemoryLimitExceededError,
+    159: ClickHouseQueryTimeoutError,
+}
+
+
+async def _get_query_log_exception(client, query_id: str) -> tuple[int, str] | None:
+    query = """
+            SELECT exception_code, exception
+            FROM clusterAllReplicas({{cluster_name:String}}, system.query_log)
+            WHERE query_id = {{query_id:String}}
+                AND type IN ('ExceptionWhileProcessing', 'ExceptionBeforeStart')
+                AND event_date >= yesterday() AND event_time >= now() - interval 24 hour
+            ORDER BY event_time DESC
+            LIMIT 1
+            FORMAT JSONEachRow
+            """
+
+    try:
+        results = await client.read_query_as_jsonl(
+            query,
+            query_parameters={"query_id": query_id, "cluster_name": settings.CLICKHOUSE_CLUSTER},
+            query_id=f"{query_id}-CLASSIFY-FAILURE",
+        )
+    except Exception:
+        return None
+
+    if not results:
+        return None
+
+    try:
+        return int(results[0]["exception_code"]), str(results[0].get("exception") or "")
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+async def _classify_stream_failure(client, query_id: str) -> ClickHouseError | None:
+    """Map a broken ArrowStream to a typed ClickHouse error via the query log.
+
+    A failure mid-stream surfaces as a broken HTTP stream or an Arrow parse error, not the
+    typed exception raised on non-200 responses, so the exception code has to come from
+    system.query_log. Returns None when the failure can't be attributed (caller re-raises
+    the original error, which stays retryable).
+    """
+    for attempt in range(QUERY_LOG_CLASSIFY_ATTEMPTS):
+        if attempt > 0:
+            await asyncio.sleep(QUERY_LOG_CLASSIFY_WAIT_SECONDS)
+        logged_exception = await _get_query_log_exception(client, query_id)
+        if logged_exception is None:
+            continue
+        exception_code, exception_message = logged_exception
+        error_class = _QUERY_LOG_EXCEPTION_CODE_TO_ERROR.get(exception_code)
+        if error_class is None:
+            return None
+        return error_class(
+            exception_message or f"Materialization query failed with ClickHouse exception code {exception_code}",
+            query_id=query_id,
+        )
+    return None
 
 
 def _materialization_query_settings() -> HogQLGlobalSettings:
@@ -422,16 +496,27 @@ async def hogql_table(query: str, team: Team, logger: FilteringBoundLogger, view
         batches_size = 0
         yielded_results = False
         ch_typings_pairs = [(column_name, column_type) for column_name, column_type, _ in query_typings]
-        async for batch in client.astream_query_as_arrow(arrow_printed, query_parameters=context.values):
-            batches_size = batches_size + batch.nbytes
-            batches.append(batch)
+        query_id = str(uuid.uuid4())
+        try:
+            async for batch in client.astream_query_as_arrow(
+                arrow_printed, query_parameters=context.values, query_id=query_id
+            ):
+                batches_size = batches_size + batch.nbytes
+                batches.append(batch)
 
-            if batches_size >= MB_100_IN_BYTES:
-                await logger.adebug(f"Yielding {len(batches)} batches for total size of {batches_size / 1000 / 1000}MB")
-                yield (_combine_batches(batches), ch_typings_pairs)
-                yielded_results = True
-                batches_size = 0
-                batches = []
+                if batches_size >= MB_100_IN_BYTES:
+                    await logger.adebug(
+                        f"Yielding {len(batches)} batches for total size of {batches_size / 1000 / 1000}MB"
+                    )
+                    yield (_combine_batches(batches), ch_typings_pairs)
+                    yielded_results = True
+                    batches_size = 0
+                    batches = []
+        except Exception as stream_error:
+            typed_error = await _classify_stream_failure(client, query_id)
+            if typed_error is not None:
+                raise typed_error from stream_error
+            raise
 
         if len(batches) > 0:
             await logger.adebug(f"Yielding {len(batches)} batches for total size of {batches_size / 1000 / 1000}MB")
