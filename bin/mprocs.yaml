@@ -113,6 +113,37 @@ procs:
             layer: Ingestion pipeline
             tech: Node
 
+    ingestion-ai:
+        sandbox: true
+        # Standalone AI ingestion pipeline — mirrors the prod ingestion-ai-main deployment
+        # (PLUGIN_SERVER_MODE=ingestion-v2 + INGESTION_PIPELINE=ai). The combined dev
+        # consumer below does NOT run this lane, so without this proc the multimodal S3
+        # blob-offload step never runs locally. The step is inert unless AI_BLOB_S3_BUCKET
+        # and AI_BLOB_OFFLOAD_TEAMS are set, so the env below points it at the local
+        # objectstorage (SeaweedFS) ai-blobs bucket and enables offload for team 1.
+        # It reads persons/groups via PersonHog (never writes), so PersonHog is required.
+        # Consumes the shared events_plugin_ingestion topic (capture-ai produces there
+        # locally), so AI events are also processed by the combined consumer — a
+        # dev-only double-write to ai_events; the offloaded (phblob://) row is this one.
+        shell: 'bin/wait-for-docker && PLUGIN_SERVER_MODE=ingestion-v2 INGESTION_PIPELINE=ai HTTP_SERVER_PORT=6746 ./bin/posthog-node'
+        capability: ai_capture
+        ready_pattern: 'All systems go'
+        groups:
+            layer: Ingestion pipeline
+            tech: Node
+        env:
+            INGESTION_CONSUMER_CONSUME_TOPIC: events_plugin_ingestion
+            INGESTION_CONSUMER_GROUP_ID: ingestion-ai
+            PERSONHOG_ENABLED: 'true'
+            PERSONHOG_ADDR: '127.0.0.1:50052'
+            AI_BLOB_S3_BUCKET: ai-blobs
+            AI_BLOB_S3_PREFIX: 'llma/'
+            AI_BLOB_S3_ENDPOINT: 'http://localhost:19000'
+            AI_BLOB_S3_REGION: us-east-1
+            AI_BLOB_S3_ACCESS_KEY_ID: object_storage_root_user
+            AI_BLOB_S3_SECRET_ACCESS_KEY: object_storage_root_password
+            AI_BLOB_OFFLOAD_TEAMS: '1'
+
     ingestion:
         sandbox: true
         shell: 'bin/wait-for-docker && PLUGIN_SERVER_MODE=ingestion-v2-combined HTTP_SERVER_PORT=6739 ./bin/posthog-node'
