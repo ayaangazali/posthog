@@ -40453,6 +40453,11 @@ export namespace Schemas {
       repository_selection?: string | null;
       /** Installation account metadata from GitHub. */
       account?: UserGitHubAccount | null;
+      /**
+         * The connected user's own GitHub login (distinct from the installation account).
+         * @nullable
+         */
+      github_login?: string | null;
       /** True when this installation id matches a team-level GitHub integration on the active project. */
       uses_shared_installation: boolean;
       /** When this integration row was created. */
