@@ -264,13 +264,13 @@ class TestFailMaterializationActivity:
         for job in previous_jobs:
             await database_sync_to_async(job.delete)()
 
-    async def test_timeout_does_not_pause_schedule_when_previous_failures_not_all_timeouts(
+    async def test_timeout_does_not_pause_schedule_when_previous_failures_not_all_resource_limits(
         self, activity_environment, ateam, anode, asaved_query, adag
     ):
         # Create 5 previous failed jobs but with different errors
         previous_jobs = []
         for i in range(5):
-            error = "Memory limit exceeded" if i == 3 else "Timeout exceeded"
+            error = "Code: 47. DB::Exception: Missing columns" if i == 3 else "Timeout exceeded"
             job = await database_sync_to_async(DataModelingJob.objects.create)(
                 team=ateam,
                 saved_query=asaved_query,
@@ -304,34 +304,37 @@ class TestFailMaterializationActivity:
         for job in previous_jobs:
             await database_sync_to_async(job.delete)()
 
-    async def test_timeout_pauses_schedule_after_5_consecutive_timeout_failures(
-        self, activity_environment, ateam, anode, asaved_query, adag
-    ):
-        # Create 5 previous timeout failed jobs
-        previous_jobs = []
-        for i in range(5):
-            job = await database_sync_to_async(DataModelingJob.objects.create)(
-                team=ateam,
-                saved_query=asaved_query,
-                status=DataModelingJob.Status.FAILED,
-                error="Timeout exceeded",
-                workflow_id=f"prev-workflow-{i}",
-            )
-            previous_jobs.append(job)
+    _TIMEOUT_ERROR = "Timeout exceeded: elapsed 600.1 seconds"
+    _BYTES_CAP_ERROR = "Code: 307. DB::Exception: Limit for bytes to read exceeded. (TOO_MANY_BYTES)"
+    _MEMORY_ERROR = "Code: 241. DB::Exception: Memory limit (for query) exceeded. (MEMORY_LIMIT_EXCEEDED)"
 
-        current_job = await database_sync_to_async(DataModelingJob.objects.create)(
-            team=ateam,
-            saved_query=asaved_query,
-            status=DataModelingJob.Status.RUNNING,
-            workflow_id="current-workflow",
-        )
+    @pytest.mark.parametrize(
+        "previous_errors,current_error",
+        [
+            ([_TIMEOUT_ERROR] * 5, _TIMEOUT_ERROR),
+            ([_BYTES_CAP_ERROR] * 5, _BYTES_CAP_ERROR),
+            ([_MEMORY_ERROR] * 5, _MEMORY_ERROR),
+            (
+                [_TIMEOUT_ERROR, _BYTES_CAP_ERROR, _MEMORY_ERROR, _BYTES_CAP_ERROR, _TIMEOUT_ERROR],
+                _BYTES_CAP_ERROR,
+            ),
+        ],
+    )
+    async def test_pauses_schedule_after_5_consecutive_resource_limit_failures(
+        self, activity_environment, ateam, anode, asaved_query, adag, previous_errors, current_error
+    ):
+        previous_jobs = [
+            await _make_job(ateam, asaved_query, DataModelingJob.Status.FAILED, error=error)
+            for error in previous_errors
+        ]
+        current_job = await _make_job(ateam, asaved_query, DataModelingJob.Status.RUNNING)
 
         inputs = FailMaterializationInputs(
             team_id=ateam.pk,
             node_id=str(anode.id),
             dag_id=str(adag.id),
             job_id=str(current_job.id),
-            error="Timeout exceeded in query",
+            error=current_error,
         )
         with unittest.mock.patch(
             "posthog.temporal.data_modeling.activities.fail_materialization.pause_saved_query_schedule"
@@ -342,12 +345,48 @@ class TestFailMaterializationActivity:
         await database_sync_to_async(current_job.refresh_from_db)()
         assert current_job.error is not None
         assert "schedule has been paused" in current_job.error
+        assert "Reduce the data the query reads" in current_job.error
 
         await database_sync_to_async(asaved_query.refresh_from_db)()
         assert asaved_query.sync_frequency_interval is None
 
-        await database_sync_to_async(current_job.delete)()
-        for job in previous_jobs:
+        for job in [*previous_jobs, current_job]:
+            await database_sync_to_async(job.delete)()
+
+    async def test_pause_recovery_tolerates_missing_v1_schedule(
+        self, activity_environment, ateam, anode, asaved_query, adag
+    ):
+        # v2-only saved queries have no v1 per-query Temporal schedule; the pause RPC fails
+        # with NOT_FOUND but the sync-frequency reset and error prefix must still land.
+        from temporalio.service import RPCError, RPCStatusCode
+
+        previous_jobs = [
+            await _make_job(ateam, asaved_query, DataModelingJob.Status.FAILED, error=self._TIMEOUT_ERROR)
+            for _ in range(5)
+        ]
+        current_job = await _make_job(ateam, asaved_query, DataModelingJob.Status.RUNNING)
+
+        inputs = FailMaterializationInputs(
+            team_id=ateam.pk,
+            node_id=str(anode.id),
+            dag_id=str(adag.id),
+            job_id=str(current_job.id),
+            error=self._TIMEOUT_ERROR,
+        )
+        with unittest.mock.patch(
+            "posthog.temporal.data_modeling.activities.fail_materialization.pause_saved_query_schedule",
+            side_effect=RPCError("schedule not found", RPCStatusCode.NOT_FOUND, b""),
+        ):
+            await activity_environment.run(fail_materialization_activity, inputs)
+
+        await database_sync_to_async(current_job.refresh_from_db)()
+        assert current_job.error is not None
+        assert "schedule has been paused" in current_job.error
+
+        await database_sync_to_async(asaved_query.refresh_from_db)()
+        assert asaved_query.sync_frequency_interval is None
+
+        for job in [*previous_jobs, current_job]:
             await database_sync_to_async(job.delete)()
 
 
@@ -1195,6 +1234,26 @@ class TestHogqlTableStreamFailure:
             with pytest.raises(RuntimeError, match="broken stream"):
                 async for _ in hogql_table("SELECT 1", ateam, logger):
                     pass
+
+
+class TestIsResourceLimitError:
+    @pytest.mark.parametrize(
+        "error,expected",
+        [
+            ("Timeout exceeded: elapsed 600.1 seconds", True),
+            ("query has exceeded timeout", True),
+            ("Code: 159. DB::Exception: boom. (TIMEOUT_EXCEEDED)", True),
+            ("Code: 307. DB::Exception: Limit for bytes to read exceeded. (TOO_MANY_BYTES)", True),
+            ("Code: 241. DB::Exception: Memory limit (for query) exceeded. (MEMORY_LIMIT_EXCEEDED)", True),
+            ("Code: 60. DB::Exception: Unknown table", False),
+            ("", False),
+            (None, False),
+        ],
+    )
+    def test_matches_resource_limit_markers(self, error, expected):
+        from posthog.temporal.data_modeling.activities.fail_materialization import _is_resource_limit_error
+
+        assert _is_resource_limit_error(error) is expected
 
 
 def test_non_retryable_errors_reference_real_v2_exception_names():
