@@ -53,6 +53,8 @@ export const SignalsReportsPartialUpdateBody = /* @__PURE__ */ zod
  */
 export const signalsReportPrReviewCommentsCreateBodyBodyMax = 65536
 
+export const signalsReportPrReviewCommentsCreateBodyInReplyToRegExp = new RegExp('^[0-9]+$')
+
 export const SignalsReportPrReviewCommentsCreateBody = /* @__PURE__ */ zod
     .object({
         body: zod
@@ -61,8 +63,9 @@ export const SignalsReportPrReviewCommentsCreateBody = /* @__PURE__ */ zod
             .describe('Comment body (GitHub-flavored markdown).'),
         in_reply_to: zod
             .string()
+            .regex(signalsReportPrReviewCommentsCreateBodyInReplyToRegExp)
             .nullish()
-            .describe('Id of the thread root comment to reply to. When set, path\/line\/side are ignored.'),
+            .describe('Numeric id of the thread root comment to reply to. When set, path\/line\/side are ignored.'),
         path: zod
             .string()
             .nullish()

@@ -50673,8 +50673,9 @@ export namespace Schemas {
          */
       body: string;
       /**
-         * Id of the thread root comment to reply to. When set, path/line/side are ignored.
+         * Numeric id of the thread root comment to reply to. When set, path/line/side are ignored.
          * @nullable
+         * @pattern ^[0-9]+$
          */
       in_reply_to?: string | null;
       /**
