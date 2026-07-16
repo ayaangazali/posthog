@@ -743,6 +743,9 @@ class GitHubIntegrationBase:
             "base_branch": base.get("ref"),
             "head_sha": head.get("sha"),
             "base_sha": base.get("sha"),
+            # The head branch's repo — for a fork PR this differs from the base repo, so cleanup can tell
+            # a same-repo branch (safe to delete) from a fork's (never touch the base repo's same-named ref).
+            "head_repo": (head.get("repo") or {}).get("full_name"),
             "repository": repo_path,
             "author": user.get("login"),
             "created_at": pr.get("created_at"),

@@ -1,6 +1,7 @@
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from django.conf import settings
 from django.db import models
@@ -590,9 +591,12 @@ class UserGitHubIntegration(GitHubIntegrationBase):
         e.g. the repo's auto-delete already removed it) counts as success."""
         token = self.get_usable_user_access_token()
         repo_path = repository if "/" in repository else f"{self.organization()}/{repository}"
+        # Encode the ref (keeping slashes, which are valid in branch names) so a name like `release#x`
+        # can't smuggle URL fragments/segments and retarget the delete.
+        ref = quote(branch, safe="/")
         response = github_request(
             "DELETE",
-            f"https://api.github.com/repos/{repo_path}/git/refs/heads/{branch}",
+            f"https://api.github.com/repos/{repo_path}/git/refs/heads/{ref}",
             source="signals_pr_branch_delete",
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
             installation_id=self.github_installation_id,

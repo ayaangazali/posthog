@@ -2282,11 +2282,18 @@ class SignalReportViewSet(
             return Response({"merged": False, "auto_merge_enabled": False, "pr_state": "open", "report_status": None})
 
         if mode in ("auto_merge", "cancel_auto_merge"):
-            node_id = params.get("node_id")
+            # Resolve the PR's node id server-side from the report's own PR — never trust a client-supplied
+            # one, or a caller could arm/cancel auto-merge on any PR their GitHub token can modify.
+            github, repo, prn, ref_error = self._github_for_report_pr(report, reference=(repository, pr_number))
+            if ref_error is not None:
+                return ref_error
+            assert github is not None
+            readiness_result = github.get_pull_request_merge_readiness(repo, prn)
+            node_id = readiness_result.get("readiness", {}).get("node_id") if readiness_result.get("success") else None
             if not node_id:
                 return Response(
-                    {"error": "node_id is required to arm or cancel auto-merge."},
-                    status=status.HTTP_400_BAD_REQUEST,
+                    {"error": "Could not resolve the pull request to auto-merge."},
+                    status=status.HTTP_502_BAD_GATEWAY,
                 )
             enable = mode == "auto_merge"
             result = self._run_user_github_write(
@@ -2339,15 +2346,20 @@ class SignalReportViewSet(
             logger.warning("signals pr merge: report resolve failed", report_id=str(report.id), exc_info=True)
 
         # Delete the head branch, but re-derive it authoritatively (never trust the client for a
-        # destructive delete) and only when it isn't the base branch — guards forks / the default branch.
+        # destructive delete) and only when it lives in THIS repo (never a fork's — a fork PR's head ref
+        # name could collide with an unrelated base-repo branch) and isn't the base branch.
         try:
             github, repo, prn, error = self._github_for_report_pr(report, reference=(repository, pr_number))
             if error is None and github is not None:
                 pr_info = github.get_pull_request(repo, prn)
-                head_branch = pr_info.get("head_branch") if pr_info.get("success") else None
-                base_branch = pr_info.get("base_branch") if pr_info.get("success") else None
-                if head_branch and head_branch != base_branch:
-                    user_github.delete_branch(repository, head_branch)
+                if pr_info.get("success"):
+                    head_branch = pr_info.get("head_branch")
+                    base_branch = pr_info.get("base_branch")
+                    head_repo = pr_info.get("head_repo")
+                    base_repo = pr_info.get("repository")
+                    same_repo = bool(head_repo and base_repo and head_repo.lower() == base_repo.lower())
+                    if head_branch and head_branch != base_branch and same_repo:
+                        user_github.delete_branch(repository, head_branch)
         except Exception:
             logger.warning(
                 "signals pr merge: branch cleanup failed", repository=repository, pr_number=pr_number, exc_info=True
