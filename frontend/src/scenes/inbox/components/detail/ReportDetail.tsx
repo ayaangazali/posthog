@@ -260,6 +260,8 @@ interface InboxDetailFrameProps {
     tab: InboxTabKey
     /** Summary section heading icon + title. */
     summary: { icon: ReactNode; title: string }
+    /** Content rendered in the main column directly under the Summary (e.g. the PR conversation). */
+    summaryFooter?: ReactNode
     /** Extra primary action(s) rendered after the shared report actions. */
     primaryAction?: ReactNode
     /** Whether to render the Overview / Files changed tab bar. Driven by whether the report has a PR
@@ -286,6 +288,7 @@ export function InboxDetailFrame({
     report,
     tab,
     summary,
+    summaryFooter,
     primaryAction,
     showFilesTab,
     diffSection,
@@ -334,7 +337,7 @@ export function InboxDetailFrame({
 
     const overviewBody = (
         <div className="grid grid-cols-1 @5xl:grid-cols-[minmax(0,80ch)_minmax(22rem,1fr)] gap-5">
-            <div className="min-w-0">
+            <div className="min-w-0 flex flex-col gap-5">
                 <DetailSection icon={summary.icon} title={summary.title}>
                     {report.summary ? (
                         <LemonMarkdown
@@ -349,6 +352,7 @@ export function InboxDetailFrame({
                         </p>
                     )}
                 </DetailSection>
+                {summaryFooter}
             </div>
 
             <div className="flex flex-col min-w-0 gap-5">
@@ -555,15 +559,11 @@ export function ReportDetail({ report, tab }: { report: SignalReport; tab: Inbox
                     <PullRequestDiffStatSkeleton />
                 ) : undefined
             }
+            // The PR conversation sits under the Summary as primary content; CI checks stay in the
+            // sidebar. Both drop themselves when there's nothing to show.
+            summaryFooter={hasPr ? <PrCommentsSection report={report} /> : undefined}
         >
-            {/* CI checks + PR comments render in the right column, above reviewers, when the report
-                has a shipped implementation PR. The sections drop themselves when there's nothing to show. */}
-            {hasPr && (
-                <>
-                    <PrChecksSection report={report} />
-                    <PrCommentsSection report={report} />
-                </>
-            )}
+            {hasPr && <PrChecksSection report={report} />}
         </InboxDetailFrame>
     )
 }
