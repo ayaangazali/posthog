@@ -61,8 +61,12 @@ export function WorkflowMetricsSummary({
                 key: 'email',
                 render: (_, row) =>
                     onSelectAction ? (
-                        <span className="cursor-pointer text-link" onClick={() => onSelectAction(row.id)}>
-                            {row.email}
+                        <span
+                            className="cursor-pointer text-link inline-flex items-center gap-1"
+                            onClick={() => onSelectAction(row.id)}
+                            title="View this step's detailed metrics"
+                        >
+                            {row.email} <span aria-hidden="true">→</span>
                         </span>
                     ) : (
                         row.email
@@ -153,8 +157,12 @@ export function WorkflowMetricsSummary({
                 key: 'push',
                 render: (_, row) =>
                     onSelectAction ? (
-                        <span className="cursor-pointer text-link" onClick={() => onSelectAction(row.id)}>
-                            {row.push}
+                        <span
+                            className="cursor-pointer text-link inline-flex items-center gap-1"
+                            onClick={() => onSelectAction(row.id)}
+                            title="View this step's detailed metrics"
+                        >
+                            {row.push} <span aria-hidden="true">→</span>
                         </span>
                     ) : (
                         row.push

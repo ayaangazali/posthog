@@ -91,17 +91,23 @@ function WorkflowRunMetrics(props: WorkflowLogicProps): JSX.Element {
     const workflowStepOptions = useMemo(
         () => [
             {
-                label: 'Overview',
+                label: 'Whole workflow',
                 value: OVERVIEW_OPTION_VALUE,
             },
-            ...workflow.actions.map((action) => {
-                const Step = getHogFlowStep(action, hogFunctionTemplatesById)
-                return {
-                    label: action.name,
-                    icon: Step?.icon,
-                    value: action.id,
-                }
-            }),
+            {
+                // A titled section makes it obvious you can drill into a single step's metrics.
+                title: 'Per step',
+                options: workflow.actions
+                    .filter((action) => action.id !== 'trigger_node')
+                    .map((action) => {
+                        const Step = getHogFlowStep(action, hogFunctionTemplatesById)
+                        return {
+                            label: action.name,
+                            icon: Step?.icon,
+                            value: action.id,
+                        }
+                    }),
+            },
         ],
         [workflow.actions, hogFunctionTemplatesById]
     )
@@ -126,9 +132,10 @@ function WorkflowRunMetrics(props: WorkflowLogicProps): JSX.Element {
         <div className="flex flex-col gap-2" data-attr="workflow-metrics">
             <div className="flex flex-row gap-2 flex-wrap justify-between">
                 <div className="flex flex-row gap-2 items-center flex-wrap">
+                    <span className="text-muted text-xs whitespace-nowrap">Metrics for</span>
                     <LemonSelect
                         size="small"
-                        options={workflowStepOptions.filter((option) => option.value !== 'trigger_node')}
+                        options={workflowStepOptions}
                         value={params.instanceId ?? OVERVIEW_OPTION_VALUE}
                         onChange={(value) =>
                             setParams({
@@ -247,17 +254,23 @@ function BatchJobMetrics({ job }: { job: HogFlowBatchJob }): JSX.Element {
     const workflowStepOptions = useMemo(
         () => [
             {
-                label: 'Overview',
+                label: 'Whole workflow',
                 value: OVERVIEW_OPTION_VALUE,
             },
-            ...workflow.actions.map((action) => {
-                const Step = getHogFlowStep(action, hogFunctionTemplatesById)
-                return {
-                    label: action.name,
-                    icon: Step?.icon,
-                    value: action.id,
-                }
-            }),
+            {
+                // A titled section makes it obvious you can drill into a single step's metrics.
+                title: 'Per step',
+                options: workflow.actions
+                    .filter((action) => action.id !== 'trigger_node')
+                    .map((action) => {
+                        const Step = getHogFlowStep(action, hogFunctionTemplatesById)
+                        return {
+                            label: action.name,
+                            icon: Step?.icon,
+                            value: action.id,
+                        }
+                    }),
+            },
         ],
         [workflow.actions, hogFunctionTemplatesById]
     )
@@ -266,9 +279,10 @@ function BatchJobMetrics({ job }: { job: HogFlowBatchJob }): JSX.Element {
         <div className="flex flex-col gap-2">
             <div className="flex flex-row gap-2 flex-wrap justify-between">
                 <div className="flex flex-row gap-2 items-center flex-wrap">
+                    <span className="text-muted text-xs whitespace-nowrap">Metrics for</span>
                     <LemonSelect
                         size="small"
-                        options={workflowStepOptions.filter((option) => option.value !== 'trigger_node')}
+                        options={workflowStepOptions}
                         value={params.instanceId ?? OVERVIEW_OPTION_VALUE}
                         onChange={(value) =>
                             setParams({
