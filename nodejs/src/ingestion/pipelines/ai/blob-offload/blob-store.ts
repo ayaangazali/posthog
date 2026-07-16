@@ -24,12 +24,18 @@ export class S3BlobStore implements BlobStore {
         return `${this.config.prefix}${teamId}/sha256/${hash}`
     }
 
-    private async timed<T>(op: 'head' | 'put' | 'copy', fn: () => Promise<T>): Promise<T> {
+    private async timed<T>(
+        op: 'head' | 'put' | 'copy',
+        fn: () => Promise<T>,
+        shouldCountError?: (error: unknown) => boolean
+    ): Promise<T> {
         const timer = aiBlobOffloadS3Duration.labels(op).startTimer()
         try {
             return await fn()
         } catch (error) {
-            aiBlobOffloadS3Errors.labels(op).inc()
+            if (!shouldCountError || shouldCountError(error)) {
+                aiBlobOffloadS3Errors.labels(op).inc()
+            }
             throw error
         } finally {
             timer()
@@ -45,7 +51,11 @@ export class S3BlobStore implements BlobStore {
 
         let lastModified: Date | undefined
         try {
-            const head = await this.timed('head', () => this.s3.send(new HeadObjectCommand({ Bucket, Key })))
+            const head = await this.timed(
+                'head',
+                () => this.s3.send(new HeadObjectCommand({ Bucket, Key })),
+                (error): boolean => !(error instanceof Error && error.name === 'NotFound')
+            )
             lastModified = head.LastModified
         } catch (error) {
             if (error instanceof Error && error.name === 'NotFound') {

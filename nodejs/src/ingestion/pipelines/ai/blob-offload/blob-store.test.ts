@@ -1,5 +1,6 @@
 import { CopyObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 
+import { aiBlobOffloadS3Errors } from '~/ingestion/pipelines/ai/metrics'
 import { S3BlobStore, buildAiBlobStore } from './blob-store'
 
 const HASH = 'b'.repeat(64)
@@ -79,6 +80,17 @@ describe('S3BlobStore', () => {
             send.mockRejectedValueOnce(notFound()).mockRejectedValueOnce(boom)
         }
         await expect(store().ensureStored(2, BLOB)).rejects.toThrow('s3 down')
+    })
+
+    it('does not count HEAD NotFound as S3 failure (normal miss flow)', async () => {
+        const headLabels = aiBlobOffloadS3Errors.labels('head')
+        const incSpy = jest.spyOn(headLabels, 'inc')
+
+        send.mockRejectedValueOnce(notFound()).mockResolvedValueOnce({})
+        const outcome = await store().ensureStored(2, BLOB)
+
+        expect(outcome).toBe('uploaded')
+        expect(incSpy).not.toHaveBeenCalled()
     })
 
     it('returns null when the bucket is unset (offload disabled)', () => {
