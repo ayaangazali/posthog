@@ -35173,6 +35173,21 @@ export namespace Schemas {
       specificity_rejection?: SpecificityMetadata | null;
     }
 
+    export interface NodeSuspensionEntry {
+      /** When the node was suspended. */
+      at: string;
+      /** Error from the failing run that triggered the suspension. */
+      reason: string;
+      /** ID of the data modeling job whose failure triggered the suspension. */
+      job_id: string;
+    }
+
+    /**
+     * Suspension state keyed by materialization engine, set after repeated consecutive failures; null when the node is not suspended.
+     * @nullable
+     */
+    export type NodeSuspended = {[key: string]: NodeSuspensionEntry} | null;
+
     /**
      * * `table` - Table
      * * `view` - View
@@ -35213,6 +35228,11 @@ export namespace Schemas {
       readonly user_tag: string | null;
       /** @nullable */
       readonly sync_interval: string | null;
+      /**
+         * Suspension state keyed by materialization engine, set after repeated consecutive failures; null when the node is not suspended.
+         * @nullable
+         */
+      readonly suspended: NodeSuspended;
     }
 
     /**
@@ -44665,6 +44685,12 @@ export namespace Schemas {
       tile?: MoveTileTile;
     }
 
+    /**
+     * Suspension state keyed by materialization engine, set after repeated consecutive failures; null when the node is not suspended.
+     * @nullable
+     */
+    export type PatchedNodeSuspended = {[key: string]: NodeSuspensionEntry} | null;
+
     export interface PatchedNode {
       readonly id?: string;
       /** @maxLength 2048 */
@@ -44689,6 +44715,11 @@ export namespace Schemas {
       readonly user_tag?: string | null;
       /** @nullable */
       readonly sync_interval?: string | null;
+      /**
+         * Suspension state keyed by materialization engine, set after repeated consecutive failures; null when the node is not suspended.
+         * @nullable
+         */
+      readonly suspended?: PatchedNodeSuspended;
     }
 
     /**
