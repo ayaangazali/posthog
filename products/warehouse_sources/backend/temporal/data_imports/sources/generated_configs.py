@@ -1892,7 +1892,8 @@ class HeightSourceConfig(config.Config):
 
 @config.config
 class HeliconeSourceConfig(config.Config):
-    pass
+    api_key: str
+    region: Literal["us", "eu"] = config.value(default="us")
 
 
 @config.config
@@ -1908,7 +1909,7 @@ class HelpScoutSourceConfig(config.Config):
 
 @config.config
 class HerokuSourceConfig(config.Config):
-    pass
+    api_key: str
 
 
 @config.config
@@ -2041,7 +2042,8 @@ class InforNexusSourceConfig(config.Config):
 
 @config.config
 class InngestSourceConfig(config.Config):
-    pass
+    signing_key: str
+    environment: str | None = None
 
 
 @config.config
@@ -2518,7 +2520,9 @@ class MaxioSourceConfig(config.Config):
 
 @config.config
 class Mem0SourceConfig(config.Config):
-    pass
+    api_key: str
+    org_id: str | None = None
+    project_id: str | None = None
 
 
 @config.config
