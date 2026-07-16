@@ -1,6 +1,7 @@
 import { actions, kea, key, path, props, reducers, selectors } from 'kea'
 import { urlToAction } from 'kea-router'
 
+import { appMetricsLogic } from 'lib/components/AppMetrics/appMetricsLogic'
 import { Scene } from 'scenes/sceneTypes'
 import { urls } from 'scenes/urls'
 
@@ -68,9 +69,17 @@ export const workflowSceneLogic = kea<workflowSceneLogicType>([
         ],
     }),
     urlToAction(({ actions, values }) => ({
-        '/workflows/:id/:tab': ({ tab }) => {
+        '/workflows/:id/:tab': ({ id, tab }, searchParams) => {
             if (tab !== values.currentTab) {
                 actions.setCurrentTab(tab as WorkflowTab)
+            }
+            // Keep the run-metrics step drilldown in sync with ?action= so refresh, shared links, and
+            // browser back/forward restore the selected step (its date range/interval stay untouched).
+            // Batch metrics render several per-job tables, so they keep their own local selection.
+            if (tab === 'metrics' && id && id !== 'new') {
+                appMetricsLogic
+                    .findMounted({ logicKey: `hog-flow-metrics-${id}` })
+                    ?.actions.setParams({ instanceId: (searchParams.action as string) || undefined })
             }
         },
     })),

@@ -54,6 +54,7 @@ export const WORKFLOW_METRICS_INFO: Record<string, { name: string; description: 
 
 function WorkflowRunMetrics(props: WorkflowLogicProps): JSX.Element {
     const logicKey = `hog-flow-metrics-${props.id}`
+    const { searchParams } = useValues(router)
 
     const logic = appMetricsLogic({
         logicKey,
@@ -63,6 +64,9 @@ function WorkflowRunMetrics(props: WorkflowLogicProps): JSX.Element {
             appSource: 'hog_flow',
             appSourceId: props.id,
             breakdownBy: 'metric_name',
+            // Seed the drilled-in step from ?action= so a refreshed or shared metrics link restores it.
+            // Subsequent changes (clicks, back/forward) are synced by workflowSceneLogic's urlToAction.
+            instanceId: (searchParams.action as string) || undefined,
         },
     })
 
@@ -70,7 +74,6 @@ function WorkflowRunMetrics(props: WorkflowLogicProps): JSX.Element {
 
     const { appMetricsTrendsLoading, appMetricsTrends, getSingleTrendSeries, params, getDateRangeAbsolute } =
         useValues(logic)
-    const { setParams } = useActions(logic)
 
     const selectedAction = workflow.actions.find((action) => action.id === params.instanceId)
 
@@ -117,14 +120,24 @@ function WorkflowRunMetrics(props: WorkflowLogicProps): JSX.Element {
             return
         }
         const { dateFrom, dateTo } = getDateRangeAbsolute()
-        const searchParams = buildEmailMetricInvocationSearchParams(
+        const invocationSearchParams = buildEmailMetricInvocationSearchParams(
             metricKey,
             dateFrom.toISOString(),
             dateTo.toISOString()
         )
-        if (searchParams) {
-            router.actions.push(urls.workflow(props.id, 'invocations'), searchParams)
+        if (invocationSearchParams) {
+            router.actions.push(urls.workflow(props.id, 'invocations'), invocationSearchParams)
         }
+    }
+
+    // Reflect the selected step in the URL (?action=) so it survives refresh/share/back-forward. The
+    // actual params.instanceId update is applied by workflowSceneLogic's urlToAction watching this.
+    const selectMetricsAction = (actionId?: string): void => {
+        if (!props.id) {
+            return
+        }
+        const { action: _prev, ...rest } = searchParams
+        router.actions.push(urls.workflow(props.id, 'metrics'), actionId ? { ...rest, action: actionId } : rest)
     }
 
     return (
@@ -136,12 +149,7 @@ function WorkflowRunMetrics(props: WorkflowLogicProps): JSX.Element {
                         size="small"
                         options={workflowStepOptions}
                         value={params.instanceId ?? OVERVIEW_OPTION_VALUE}
-                        onChange={(value) =>
-                            setParams({
-                                ...params,
-                                instanceId: value === OVERVIEW_OPTION_VALUE ? undefined : value,
-                            })
-                        }
+                        onChange={(value) => selectMetricsAction(value === OVERVIEW_OPTION_VALUE ? undefined : value)}
                     />
                     {selectedAction?.type === 'function_email' && props.id ? (
                         <LemonButton
@@ -161,7 +169,7 @@ function WorkflowRunMetrics(props: WorkflowLogicProps): JSX.Element {
                 <WorkflowMetricsSummary
                     logicKey={logicKey}
                     id={props.id ?? ''}
-                    onSelectAction={(actionId) => setParams({ ...params, instanceId: actionId })}
+                    onSelectAction={(actionId) => selectMetricsAction(actionId)}
                     onMetricClick={onEmailMetricClick}
                 />
             ) : selectedAction?.type === 'function_email' ? (
