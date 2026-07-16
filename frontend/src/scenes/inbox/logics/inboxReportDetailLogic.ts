@@ -27,6 +27,8 @@ import {
     signalsReportArtefactsDiff,
     signalsReportPrChecks,
     signalsReportPrComments,
+    signalsReportPrMerge,
+    signalsReportPrMergeReadiness,
     signalsReportPrReviewCommentDestroy,
     signalsReportPrReviewCommentReactionDestroy,
     signalsReportPrReviewCommentReactionsCreate,
@@ -36,9 +38,11 @@ import {
 } from 'products/signals/frontend/generated/api'
 import type {
     CommitDiffResponseApi,
+    MergeMethodEnumApi,
     PullRequestCheckApi,
     PullRequestCommentApi,
     PullRequestCommentReactionApi,
+    PullRequestMergeReadinessApi,
 } from 'products/signals/frontend/generated/api.schemas'
 
 import type { SignalNodeApi } from '../../../../../products/signals/frontend/generated/api.schemas'
@@ -483,6 +487,14 @@ export const inboxReportDetailLogic = kea<inboxReportDetailLogicType>([
         toggleReviewCommentReaction: (commentId: string, content: string) => ({ commentId, content }),
         // Which comment is being edited inline (null = none).
         setEditingCommentId: (commentId: string | null) => ({ commentId }),
+        // Merge the PR now / arm auto-merge (merge once checks pass) / cancel a pending auto-merge.
+        mergePr: true,
+        armAutoMerge: true,
+        cancelAutoMerge: true,
+        // Record an approving review as the user, then merge the usual way (used when a required review
+        // is the only thing blocking the merge).
+        approveAndMerge: true,
+        setMerging: (merging: boolean) => ({ merging }),
         setReport: (report: SignalReport | null) => ({ report }),
         // Optimistically replace the reviewer list while the PUT is in flight, then reload from the server.
         // Mirrors desktop `useUpdateSuggestedReviewers` optimistic behavior.
@@ -636,6 +648,20 @@ export const inboxReportDetailLogic = kea<inboxReportDetailLogicType>([
                 },
             },
         ],
+        // Mergeability + CI + auto-merge availability for the report's PR — drives the merge control.
+        prMergeReadiness: [
+            null as PullRequestMergeReadinessApi | null,
+            {
+                loadPrMergeReadiness: async () => {
+                    const teamId = teamLogic.values.currentTeamId
+                    if (!teamId) {
+                        return null
+                    }
+                    const response = await signalsReportPrMergeReadiness(String(teamId), props.reportId)
+                    return response.readiness
+                },
+            },
+        ],
     })),
 
     reducers({
@@ -733,6 +759,13 @@ export const inboxReportDetailLogic = kea<inboxReportDetailLogicType>([
             {
                 setEditingCommentId: (_, { commentId }) => commentId,
                 setReport: () => null,
+            },
+        ],
+        // In-flight guard for the merge control, so a merge/auto-merge action can't be double-fired.
+        merging: [
+            false,
+            {
+                setMerging: (_, { merging }) => merging,
             },
         ],
     }),
@@ -1121,6 +1154,113 @@ export const inboxReportDetailLogic = kea<inboxReportDetailLogicType>([
                 lemonToast.error(reviewCommentError(error, "Couldn't add the reaction"))
             }
         },
+        // Merge the PR now — guarded against a moved branch by the head sha we last read, using the
+        // repo's default merge method. On success the report resolves server-side, so reload artefacts
+        // (the shell re-reads status from there) and the readiness so the control shows the merged state.
+        mergePr: async () => {
+            const teamId = teamLogic.values.currentTeamId
+            const readiness = values.prMergeReadiness
+            if (!teamId || !readiness || values.merging) {
+                return
+            }
+            actions.setMerging(true)
+            try {
+                await signalsReportPrMerge(String(teamId), props.reportId, {
+                    merge_mode: 'merge',
+                    sha: readiness.head_sha ?? undefined,
+                    merge_method: (readiness.merge_method as MergeMethodEnumApi | null) ?? undefined,
+                })
+                lemonToast.success('Pull request merged')
+                actions.loadReportArtefacts()
+            } catch (error: any) {
+                lemonToast.error(reviewCommentError(error, "Couldn't merge the pull request"))
+            } finally {
+                actions.setMerging(false)
+                actions.loadPrMergeReadiness()
+            }
+        },
+        // Approve the PR as the user, then merge the usual way: merge now when checks are already green,
+        // or arm auto-merge when they're still pending. GitHub re-evaluates mergeability at merge time,
+        // so the direct merge is safe right after the approval lands.
+        approveAndMerge: async () => {
+            const teamId = teamLogic.values.currentTeamId
+            const readiness = values.prMergeReadiness
+            if (!teamId || !readiness?.node_id || values.merging) {
+                return
+            }
+            actions.setMerging(true)
+            try {
+                await signalsReportPrMerge(String(teamId), props.reportId, {
+                    merge_mode: 'approve',
+                    node_id: readiness.node_id,
+                })
+                const method = (readiness.merge_method as MergeMethodEnumApi | null) ?? undefined
+                if (readiness.ci_status === 'pending' && readiness.auto_merge_allowed) {
+                    await signalsReportPrMerge(String(teamId), props.reportId, {
+                        merge_mode: 'auto_merge',
+                        node_id: readiness.node_id,
+                        merge_method: method,
+                    })
+                    lemonToast.success('Approved. Auto-merge armed — this PR will merge once checks pass')
+                } else {
+                    await signalsReportPrMerge(String(teamId), props.reportId, {
+                        merge_mode: 'merge',
+                        sha: readiness.head_sha ?? undefined,
+                        merge_method: method,
+                    })
+                    lemonToast.success('Approved and merged')
+                    actions.loadReportArtefacts()
+                }
+            } catch (error: any) {
+                lemonToast.error(reviewCommentError(error, "Couldn't approve and merge the pull request"))
+            } finally {
+                actions.setMerging(false)
+                actions.loadPrMergeReadiness()
+            }
+        },
+        // Arm GitHub-native auto-merge (merges once required checks pass), as the user.
+        armAutoMerge: async () => {
+            const teamId = teamLogic.values.currentTeamId
+            const readiness = values.prMergeReadiness
+            if (!teamId || !readiness?.node_id || values.merging) {
+                return
+            }
+            actions.setMerging(true)
+            try {
+                await signalsReportPrMerge(String(teamId), props.reportId, {
+                    merge_mode: 'auto_merge',
+                    node_id: readiness.node_id,
+                    merge_method: (readiness.merge_method as MergeMethodEnumApi | null) ?? undefined,
+                })
+                lemonToast.success('Auto-merge armed — this PR will merge once checks pass')
+            } catch (error: any) {
+                lemonToast.error(reviewCommentError(error, "Couldn't arm auto-merge"))
+            } finally {
+                actions.setMerging(false)
+                actions.loadPrMergeReadiness()
+            }
+        },
+        // Disarm a previously-armed auto-merge.
+        cancelAutoMerge: async () => {
+            const teamId = teamLogic.values.currentTeamId
+            const readiness = values.prMergeReadiness
+            if (!teamId || !readiness?.node_id || values.merging) {
+                return
+            }
+            actions.setMerging(true)
+            try {
+                await signalsReportPrMerge(String(teamId), props.reportId, {
+                    merge_mode: 'cancel_auto_merge',
+                    node_id: readiness.node_id,
+                })
+                lemonToast.success('Auto-merge cancelled')
+            } catch (error: any) {
+                lemonToast.error(reviewCommentError(error, "Couldn't cancel auto-merge"))
+            } finally {
+                actions.setMerging(false)
+                actions.loadPrMergeReadiness()
+            }
+        },
         // The artefact log is the single source for the activity timeline AND the task associations,
         // so deriving the linked tasks hangs off each successful artefact load rather than issuing a
         // second identical fetch. The branch diff also cascades from here (once artefacts resolve we
@@ -1155,6 +1295,9 @@ export const inboxReportDetailLogic = kea<inboxReportDetailLogicType>([
                 if (values.prComments === null && !values.prCommentsLoading) {
                     actions.loadPrComments()
                 }
+                if (values.prMergeReadiness === null && !values.prMergeReadinessLoading) {
+                    actions.loadPrMergeReadiness()
+                }
             }
         },
     })),
@@ -1181,6 +1324,7 @@ export const inboxReportDetailLogic = kea<inboxReportDetailLogicType>([
             const interval = setInterval(() => {
                 if (values.hasImplementationPr) {
                     actions.loadPrChecks()
+                    actions.loadPrMergeReadiness()
                 }
             }, PR_CHECKS_POLL_INTERVAL_MS)
             return () => clearInterval(interval)

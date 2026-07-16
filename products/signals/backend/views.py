@@ -109,6 +109,9 @@ from products.signals.backend.serializers import (
     CommitDiffResponseSerializer,
     PullRequestChecksResponseSerializer,
     PullRequestCommentsResponseSerializer,
+    PullRequestMergeReadinessResponseSerializer,
+    PullRequestMergeRequestSerializer,
+    PullRequestMergeResponseSerializer,
     PullRequestReviewCommentCreateResponseSerializer,
     PullRequestReviewCommentCreateSerializer,
     PullRequestReviewCommentReactionCreateResponseSerializer,
@@ -2217,6 +2220,143 @@ class SignalReportViewSet(
             return result
         self._bust_pr_comments_cache(repository, pr_number)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(
+        responses={
+            200: OpenApiResponse(
+                response=PullRequestMergeReadinessResponseSerializer,
+                description="Whether the PR can merge now, needs auto-merge, or is blocked — plus the "
+                "repo's default merge method and the PR node id / head sha the merge action needs.",
+            ),
+            404: OpenApiResponse(description="Report has no implementation PR, or no integration can read it."),
+            502: OpenApiResponse(description="GitHub could not return the merge status."),
+        },
+        summary="Get merge readiness for a report's implementation PR",
+        operation_id="signals_report_pr_merge_readiness",
+    )
+    @action(detail=True, methods=["get"], url_path="pr_merge_readiness", required_scopes=["task:read"])
+    def pr_merge_readiness(self, request: Request, *args, **kwargs) -> Response:
+        report = cast(SignalReport, self.get_object())
+        return self._pr_github_passthrough(report, "get_pull_request_merge_readiness", "readiness", "merge status")
+
+    @extend_schema(
+        request=PullRequestMergeRequestSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=PullRequestMergeResponseSerializer,
+                description="The action's outcome — merged now, auto-merge armed/cancelled — and the "
+                "report's resulting status.",
+            ),
+            400: OpenApiResponse(description="Missing node id for an auto-merge action."),
+            403: OpenApiResponse(description="No usable personal GitHub connection, or no write access to the repo."),
+            404: OpenApiResponse(description="Report has no implementation PR."),
+            502: OpenApiResponse(description="GitHub rejected the merge (conflicts, protection, or a moved branch)."),
+        },
+        summary="Merge a report's implementation PR, or arm/cancel auto-merge",
+        operation_id="signals_report_pr_merge",
+    )
+    @action(detail=True, methods=["post"], url_path="pr_merge", required_scopes=["task:write"])
+    def pr_merge(self, request: Request, *args, **kwargs) -> Response:
+        report = cast(SignalReport, self.get_object())
+        serializer = PullRequestMergeRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+        mode = params["merge_mode"]
+
+        resolved = self._resolve_user_github_and_pr(report, request)
+        if isinstance(resolved, Response):
+            return resolved
+        user_github, repository, pr_number = resolved
+        merge_method = params.get("merge_method") or "merge"
+
+        if mode == "approve":
+            result = self._run_user_github_write(
+                lambda: user_github.approve_pull_request(repository, pr_number),
+                repository,
+                pr_number,
+                noun="approval",
+            )
+            if isinstance(result, Response):
+                return result
+            self._bust_pr_merge_readiness_cache(repository, pr_number)
+            return Response({"merged": False, "auto_merge_enabled": False, "pr_state": "open", "report_status": None})
+
+        if mode in ("auto_merge", "cancel_auto_merge"):
+            node_id = params.get("node_id")
+            if not node_id:
+                return Response(
+                    {"error": "node_id is required to arm or cancel auto-merge."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            enable = mode == "auto_merge"
+            result = self._run_user_github_write(
+                lambda: (
+                    user_github.enable_pull_request_auto_merge(node_id, merge_method=merge_method)
+                    if enable
+                    else user_github.disable_pull_request_auto_merge(node_id)
+                ),
+                repository,
+                pr_number,
+                noun="auto-merge",
+            )
+            if isinstance(result, Response):
+                return result
+            self._bust_pr_merge_readiness_cache(repository, pr_number)
+            return Response({"merged": False, "auto_merge_enabled": enable, "pr_state": "open", "report_status": None})
+
+        # mode == "merge": merge immediately, guarding against a moved branch with the head sha.
+        result = self._run_user_github_write(
+            lambda: user_github.merge_pull_request(
+                repository, pr_number, merge_method=merge_method, sha=params.get("sha")
+            ),
+            repository,
+            pr_number,
+            noun="merge",
+        )
+        if isinstance(result, Response):
+            return result
+
+        self._bust_pr_merge_readiness_cache(repository, pr_number)
+        report_status = self._finalize_merged_report(report, user_github, repository, pr_number)
+        return Response(
+            {"merged": True, "auto_merge_enabled": False, "pr_state": "merged", "report_status": report_status}
+        )
+
+    def _finalize_merged_report(
+        self, report: SignalReport, user_github: UserGitHubIntegration, repository: str, pr_number: int
+    ) -> str | None:
+        """Post-merge housekeeping — resolve the report and delete the head branch. Both are best-effort:
+        a merge that already succeeded must never surface as a failure because the follow-up errored."""
+        report_status: str | None = None
+        try:
+            with transaction.atomic():
+                updated_fields = report.transition_to(SignalReport.Status.RESOLVED)
+                report.save(update_fields=updated_fields)
+            report_status = report.status
+        except InvalidStatusTransition:
+            pass  # A report not in a resolvable state just keeps its status; the merge still stands.
+        except Exception:
+            logger.warning("signals pr merge: report resolve failed", report_id=str(report.id), exc_info=True)
+
+        # Delete the head branch, but re-derive it authoritatively (never trust the client for a
+        # destructive delete) and only when it isn't the base branch — guards forks / the default branch.
+        try:
+            github, repo, prn, error = self._github_for_report_pr(report, reference=(repository, pr_number))
+            if error is None and github is not None:
+                pr_info = github.get_pull_request(repo, prn)
+                head_branch = pr_info.get("head_branch") if pr_info.get("success") else None
+                base_branch = pr_info.get("base_branch") if pr_info.get("success") else None
+                if head_branch and head_branch != base_branch:
+                    user_github.delete_branch(repository, head_branch)
+        except Exception:
+            logger.warning(
+                "signals pr merge: branch cleanup failed", repository=repository, pr_number=pr_number, exc_info=True
+            )
+        return report_status
+
+    def _bust_pr_merge_readiness_cache(self, repository: str, pr_number: int) -> None:
+        """Drop the merge-readiness read cache so the next poll reflects a just-made merge/auto-merge action."""
+        cache.delete(f"signals:pr-github:{self.team.id}:{repository}:{pr_number}:get_pull_request_merge_readiness")
 
     def _bust_pr_comments_cache(self, repository: str, pr_number: int) -> None:
         """Drop the short PR-comments read cache so a just-made change shows on the next fetch."""

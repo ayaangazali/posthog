@@ -1,7 +1,7 @@
 import { useValues } from 'kea'
 import { ReactNode, useState } from 'react'
 
-import { IconArrowLeft, IconDocument, IconEllipsis, IconExternal, IconPullRequest, IconSearch } from '@posthog/icons'
+import { IconArrowLeft, IconDocument, IconEllipsis, IconGithub, IconPullRequest, IconSearch } from '@posthog/icons'
 import { LemonButton, LemonTabs, Tooltip } from '@posthog/lemon-ui'
 
 import { TZLabel } from 'lib/components/TZLabel'
@@ -40,6 +40,7 @@ import { DetailSection } from './DetailSection'
 import { DiscussReportButton } from './DiscussReportButton'
 import { PrChecksSection } from './PrChecksSection'
 import { PrCommentsSection } from './PrCommentsSection'
+import { PrMergeControl } from './PrMergeControl'
 import {
     PullRequestBranchTag,
     PullRequestBranchTagSkeleton,
@@ -49,7 +50,7 @@ import {
     PullRequestDiffStatSkeleton,
 } from './PullRequestDiffPanel'
 import { ReportActivitySection } from './ReportActivitySection'
-import { ReportDetailAction, useReportDetailActions } from './ReportDetailActions'
+import { useReportDetailActions } from './ReportDetailActions'
 import { ReportTasksSection } from './ReportTasksSection'
 import { SuggestedReviewersSection } from './SuggestedReviewersSection'
 
@@ -264,6 +265,8 @@ interface InboxDetailFrameProps {
     summaryFooter?: ReactNode
     /** Extra primary action(s) rendered after the shared report actions. */
     primaryAction?: ReactNode
+    /** Compact "Open in GitHub" icon link, rendered at the very left of the action row (when there's a PR). */
+    openInGithub?: ReactNode
     /** Whether to render the Overview / Files changed tab bar. Driven by whether the report has a PR
      * (known immediately), not by whether the diff has loaded — so the tab bar doesn't pop in a beat
      * later and shift the layout. */
@@ -290,6 +293,7 @@ export function InboxDetailFrame({
     summary,
     summaryFooter,
     primaryAction,
+    openInGithub,
     showFilesTab,
     diffSection,
     diffBranchTag,
@@ -316,19 +320,10 @@ export function InboxDetailFrame({
     const reportUrl = `${window.location.origin}${addProjectIdIfMissing(urls.inboxReport(tab, report.id))}`
 
     // Secondary actions as data so the same set renders inline as buttons on wide layouts and as a
-    // standard `LemonMenu` on narrow ones; the primary action stays inline either way.
+    // standard `LemonMenu` on narrow ones. Copy link and Open in GitHub are compact icon buttons at the
+    // very left instead (see the header); the primary action (merge) stays rightmost.
     const detailActions = useReportDetailActions(report)
-    const reportActions: ReportDetailAction[] = [
-        {
-            key: 'copy-link',
-            label: 'Copy link',
-            icon: <IconLink />,
-            tooltip: 'Copy a link to this report',
-            onClick: () => void copyToClipboard(reportUrl, 'report link'),
-        },
-        ...detailActions,
-    ]
-    const overflowMenuItems: LemonMenuItem[] = reportActions.map((action) => ({
+    const overflowMenuItems: LemonMenuItem[] = detailActions.map((action) => ({
         label: action.label,
         icon: action.icon,
         disabledReason: action.loading ? 'Working…' : action.disabledReason,
@@ -431,12 +426,21 @@ export function InboxDetailFrame({
                         </div>
                     </div>
                     <div className="flex items-center gap-2 @2xl:shrink-0">
-                        {primaryAction}
+                        {/* Compact icon links at the very left: open the PR on GitHub, then copy the report link. */}
+                        {openInGithub}
+                        <LemonButton
+                            type="tertiary"
+                            size="small"
+                            icon={<IconLink />}
+                            tooltip="Copy a link to this report"
+                            aria-label="Copy link"
+                            onClick={() => void copyToClipboard(reportUrl, 'report link')}
+                        />
                         {/* Discuss is always available and stays inline as its own dropdown button. */}
                         <DiscussReportButton report={report} reportUrl={reportUrl} />
                         {/* Buttons inline on wide layouts; collapse into a standard LemonMenu kebab below @4xl. */}
                         <div className="hidden @4xl:flex items-center gap-2">
-                            {reportActions.map((action) => (
+                            {detailActions.map((action) => (
                                 <LemonButton
                                     key={action.key}
                                     type="secondary"
@@ -452,15 +456,19 @@ export function InboxDetailFrame({
                                 </LemonButton>
                             ))}
                         </div>
-                        <LemonMenu items={overflowMenuItems} placement="bottom-end">
-                            <LemonButton
-                                type="secondary"
-                                size="small"
-                                icon={<IconEllipsis />}
-                                aria-label="More actions"
-                                className="@4xl:hidden"
-                            />
-                        </LemonMenu>
+                        {overflowMenuItems.length > 0 && (
+                            <LemonMenu items={overflowMenuItems} placement="bottom-end">
+                                <LemonButton
+                                    type="secondary"
+                                    size="small"
+                                    icon={<IconEllipsis />}
+                                    aria-label="More actions"
+                                    className="@4xl:hidden"
+                                />
+                            </LemonMenu>
+                        )}
+                        {/* The merge control is the primary CTA, so it sits last (rightmost). */}
+                        {primaryAction}
                     </div>
                 </div>
             </div>
@@ -523,18 +531,26 @@ export function ReportDetail({ report, tab }: { report: SignalReport; tab: Inbox
             report={report}
             tab={tab}
             summary={{ icon: hasPr ? <IconPullRequest /> : <IconDocument />, title: 'Summary' }}
-            primaryAction={
+            openInGithub={
                 hasPr ? (
                     <LemonButton
-                        type="primary"
+                        type="tertiary"
                         size="small"
-                        sideIcon={<IconExternal />}
+                        icon={<IconGithub />}
                         to={prFilesUrl(prUrl)}
                         targetBlank
-                        tooltip={`${prRef.repoSlug}#${prRef.number}`}
-                    >
-                        Open in GitHub
-                    </LemonButton>
+                        tooltip={`Open ${prRef.repoSlug}#${prRef.number} on GitHub`}
+                        aria-label="Open in GitHub"
+                    />
+                ) : undefined
+            }
+            primaryAction={
+                hasPr ? (
+                    <PrMergeControl
+                        report={report}
+                        githubUrl={prFilesUrl(prUrl)}
+                        githubTooltip={`Open ${prRef.repoSlug}#${prRef.number} on GitHub`}
+                    />
                 ) : undefined
             }
             showFilesTab={hasPr || canDiff}
