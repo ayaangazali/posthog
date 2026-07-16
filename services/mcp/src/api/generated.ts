@@ -14380,6 +14380,30 @@ export namespace Schemas {
       Base64: 'base64',
     } as const;
 
+    /**
+     * * `+1` - +1
+     * * `-1` - -1
+     * * `laugh` - laugh
+     * * `hooray` - hooray
+     * * `confused` - confused
+     * * `heart` - heart
+     * * `rocket` - rocket
+     * * `eyes` - eyes
+     */
+    export type ContentEnum = typeof ContentEnum[keyof typeof ContentEnum];
+
+
+    export const ContentEnum = {
+      '1': '+1',
+      NumberMinus1: '-1',
+      Laugh: 'laugh',
+      Hooray: 'hooray',
+      Confused: 'confused',
+      Heart: 'heart',
+      Rocket: 'rocket',
+      Eyes: 'eyes',
+    } as const;
+
     export interface ContextGeneration {
       /**
          * ID of the Task currently generating this folder's CONTEXT.md, or null if none.
@@ -45802,6 +45826,17 @@ export namespace Schemas {
       scopes?: string[];
     }
 
+    /**
+     * Request body for editing a review comment's markdown body.
+     */
+    export interface PatchedPullRequestReviewCommentUpdate {
+      /**
+         * New comment body (GitHub-flavored markdown).
+         * @maxLength 65536
+         */
+      body?: string;
+    }
+
     export interface PatchedQueryTabState {
       readonly id?: string;
       /**
@@ -50439,6 +50474,33 @@ export namespace Schemas {
     }
 
     /**
+     * * `LEFT` - LEFT
+     * * `RIGHT` - RIGHT
+     */
+    export type SideEnum = typeof SideEnum[keyof typeof SideEnum];
+
+
+    export const SideEnum = {
+      Left: 'LEFT',
+      Right: 'RIGHT',
+    } as const;
+
+    /**
+     * One emoji reaction on a review comment, with the reactor so the viewer's own can be toggled.
+     */
+    export interface PullRequestCommentReaction {
+      /** GitHub reaction id (needed to remove it). */
+      readonly id: string;
+      /** Reaction key: '+1', '-1', 'laugh', 'hooray', 'confused', 'heart', 'rocket', or 'eyes'. */
+      readonly content: string;
+      /**
+         * GitHub login of the user who added the reaction.
+         * @nullable
+         */
+      readonly user_login: string | null;
+    }
+
+    /**
      * One comment on a pull request — a conversation comment or an inline review comment.
      */
     export interface PullRequestComment {
@@ -50476,6 +50538,38 @@ export namespace Schemas {
          * @nullable
          */
       readonly path: string | null;
+      /**
+         * Line in the diff the review comment is anchored to — the end line for multi-line comments (review comments only; null when the comment is outdated relative to the PR head).
+         * @nullable
+         */
+      readonly line: number | null;
+      /**
+         * First line of a multi-line review comment's range (review comments only).
+         * @nullable
+         */
+      readonly start_line: number | null;
+      /** Diff side the review comment is anchored to: 'LEFT' = deletions, 'RIGHT' = additions (review comments only).
+       *
+       * * `LEFT` - LEFT
+       * * `RIGHT` - RIGHT */
+      readonly side: SideEnum | null;
+      /**
+         * Diff hunk excerpt the review comment applies to (review comments only).
+         * @nullable
+         */
+      readonly diff_hunk: string | null;
+      /**
+         * Id of the thread root comment this one replies to; null for thread roots and conversation comments.
+         * @nullable
+         */
+      readonly in_reply_to_id: string | null;
+      /**
+         * SHA of the commit the review comment was made against (review comments only).
+         * @nullable
+         */
+      readonly commit_id: string | null;
+      /** Emoji reactions on this review comment, one entry per reactor. */
+      readonly reactions: readonly PullRequestCommentReaction[];
     }
 
     /**
@@ -50559,6 +50653,72 @@ export namespace Schemas {
       truncated: boolean;
       /** Maximum number of pull requests returned in `items`. */
       limit: number;
+    }
+
+    /**
+     * Request body for posting an inline PR review comment as the requesting user.
+     *
+     * Two shapes: a reply to an existing thread (only `body` + `in_reply_to`), or a new
+     * thread on a diff line (`body` + `path` + `line`, optionally `side`).
+     */
+    export interface PullRequestReviewCommentCreate {
+      /**
+         * Comment body (GitHub-flavored markdown).
+         * @maxLength 65536
+         */
+      body: string;
+      /**
+         * Id of the thread root comment to reply to. When set, path/line/side are ignored.
+         * @nullable
+         */
+      in_reply_to?: string | null;
+      /**
+         * File path to anchor a new comment thread to (required when starting a new thread).
+         * @nullable
+         */
+      path?: string | null;
+      /**
+         * Diff line to anchor a new comment thread to (required when starting a new thread).
+         * @minimum 1
+         * @nullable
+         */
+      line?: number | null;
+      /** Diff side of the anchor line: 'LEFT' = deletions, 'RIGHT' = additions. Defaults to 'RIGHT'.
+       *
+       * * `LEFT` - LEFT
+       * * `RIGHT` - RIGHT */
+      side?: SideEnum | null;
+    }
+
+    /**
+     * Response after posting a review comment — the created comment in the normalized PR-comment shape.
+     */
+    export interface PullRequestReviewCommentCreateResponse {
+      readonly comment: PullRequestComment;
+    }
+
+    /**
+     * Request body for adding an emoji reaction to a review comment.
+     */
+    export interface PullRequestReviewCommentReactionCreate {
+      /** Reaction to add: one of '+1', '-1', 'laugh', 'hooray', 'confused', 'heart', 'rocket', 'eyes'.
+       *
+       * * `+1` - +1
+       * * `-1` - -1
+       * * `laugh` - laugh
+       * * `hooray` - hooray
+       * * `confused` - confused
+       * * `heart` - heart
+       * * `rocket` - rocket
+       * * `eyes` - eyes */
+      content: ContentEnum;
+    }
+
+    /**
+     * Response after adding a reaction — the created reaction, so the frontend can track its id.
+     */
+    export interface PullRequestReviewCommentReactionCreateResponse {
+      readonly reaction: PullRequestCommentReaction;
     }
 
     /**
