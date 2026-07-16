@@ -58,15 +58,20 @@ export function AppMetricSummary({
     const diffForDisplay = formatPercentageDiff(total, totalPreviousPeriod)
 
     const chartColor = total === 0 ? colorIfZero : color
-    const seriesOverrides = useMemo(
-        () =>
-            timeSeries && chartColor
-                ? Object.fromEntries(
-                      timeSeries.series.map((x): [string, AppMetricsSeriesOverride] => [x.name, { color: chartColor }])
-                  )
-                : undefined,
-        [timeSeries, chartColor]
-    )
+    const seriesOverrides = useMemo(() => {
+        if (!timeSeries || !chartColor) {
+            return undefined
+        }
+        // A single-series tile takes its metric's brand color. With more than one series (e.g. a
+        // channel breakdown) forcing them all to that one color makes the lines indistinguishable,
+        // so let each fall back to the theme palette — matching how the full trends chart colors them.
+        if (timeSeries.series.length > 1 && total !== 0) {
+            return undefined
+        }
+        return Object.fromEntries(
+            timeSeries.series.map((x): [string, AppMetricsSeriesOverride] => [x.name, { color: chartColor }])
+        )
+    }, [timeSeries, chartColor, total])
 
     // Hide component if hideIfZero is true and there's no data
     if (hideIfZero && !loading && total === 0 && totalPreviousPeriod === 0) {

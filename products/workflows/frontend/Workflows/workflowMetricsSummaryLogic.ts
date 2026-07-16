@@ -675,30 +675,6 @@ export function subtractSeries(
     }
 }
 
-// Element-wise sum of two single-series trends into one line. Used to combine email + push into a
-// single "Messages sent" tile on flows that send both.
-export function sumSeries(
-    a: AppMetricsTimeSeriesResponse | null,
-    b: AppMetricsTimeSeriesResponse | null,
-    displayName: string
-): AppMetricsTimeSeriesResponse | null {
-    if (!a && !b) {
-        return null
-    }
-    const labels = a?.labels ?? b?.labels ?? []
-    const av = a?.series[0]?.values
-    const bv = b?.series[0]?.values
-    return {
-        labels,
-        series: [
-            {
-                name: displayName,
-                values: Array.from({ length: labels.length }, (_, i) => (av?.[i] ?? 0) + (bv?.[i] ?? 0)),
-            },
-        ],
-    }
-}
-
 function mapEmailMetricsToActions(
     totalsResponse: AppMetricsTotalsResponse
 ): Record<string, Partial<Record<EmailMetric, number>>> {

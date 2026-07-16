@@ -15,7 +15,6 @@ import {
     type EmailMetricRow,
     type PushMetricRow,
     withDisplayName,
-    sumSeries,
     workflowMetricsSummaryLogic,
     type WorkflowMetricsSummaryLogicProps,
 } from './workflowMetricsSummaryLogic'
@@ -232,17 +231,27 @@ export function WorkflowMetricsSummary({
                             : isSent && hasPush
                               ? 'Total number of push notifications attempted to be sent by this workflow'
                               : metric.description
-                    const sentSeries = (previous?: boolean): AppMetricsTimeSeriesResponse | null =>
-                        hasEmail && hasPush
-                            ? sumSeries(
-                                  getSingleTrendSeries('email_sent', previous),
-                                  getSingleTrendSeries('push_sent', previous),
-                                  name
-                              )
-                            : withDisplayName(
-                                  getSingleTrendSeries(hasPush ? 'push_sent' : 'email_sent', previous),
-                                  name
-                              )
+                    const sentSeries = (previous?: boolean): AppMetricsTimeSeriesResponse | null => {
+                        if (hasEmail && hasPush) {
+                            // Split the combined "Messages sent" tile into Emails + Push lines. The headline
+                            // number stays their sum (AppMetricSummary totals across series); the sparkline
+                            // and its tooltip break the total down by channel.
+                            const emailSeries = getSingleTrendSeries('email_sent', previous)
+                            const pushSeries = getSingleTrendSeries('push_sent', previous)
+                            const labels = emailSeries?.labels ?? pushSeries?.labels ?? []
+                            return {
+                                labels,
+                                series: [
+                                    { name: 'Emails', values: emailSeries?.series[0]?.values ?? [] },
+                                    { name: 'Push notifications', values: pushSeries?.series[0]?.values ?? [] },
+                                ],
+                            }
+                        }
+                        return withDisplayName(
+                            getSingleTrendSeries(hasPush ? 'push_sent' : 'email_sent', previous),
+                            name
+                        )
+                    }
 
                     const timeSeries = isSent
                         ? sentSeries()
