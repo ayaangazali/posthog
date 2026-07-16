@@ -72,3 +72,47 @@ export const aiBlobOffloadS3Errors = new Counter({
     help: 'S3 request failures in the AI blob offload store',
     labelNames: ['op'],
 })
+
+export const aiBlobOffloadEventsCounter = new Counter({
+    name: 'llma_ai_blob_offload_events_total',
+    help: 'AI events scanned by the blob offload step',
+    labelNames: ['team_id', 'outcome'], // outcome: no_blobs | offloaded
+})
+
+export const aiBlobOffloadBlobsCounter = new Counter({
+    name: 'llma_ai_blob_offload_blobs_total',
+    help: 'Blobs detected and stored by the offload step',
+    labelNames: ['team_id', 'detector', 'mime_family', 'outcome'], // outcome: uploaded | fresh | touched
+})
+
+export const aiBlobOffloadBelowFloorCounter = new Counter({
+    name: 'llma_ai_blob_offload_below_floor_total',
+    help: 'Binary payloads left inline because they are under the size floor',
+    labelNames: ['team_id'],
+})
+
+export const aiBlobOffloadBlobBytes = new Histogram({
+    name: 'llma_ai_blob_offload_blob_bytes',
+    help: 'Decoded size of offloaded blobs',
+    labelNames: ['mime_family'],
+    buckets: [1024, 8192, 65536, 262144, 1048576, 4194304, 8388608],
+})
+
+export const aiBlobOffloadBlobsPerEvent = new Histogram({
+    name: 'llma_ai_blob_offload_blobs_per_event',
+    help: 'Unique blobs per offloaded event',
+    buckets: [1, 2, 3, 5, 8, 13, 21],
+})
+
+export const aiBlobOffloadEventBytes = new Histogram({
+    name: 'llma_ai_blob_offload_event_bytes',
+    help: 'Serialized heavy-prop bytes per offloaded event, before and after rewrite',
+    labelNames: ['stage'], // stage: before | after
+    buckets: [4096, 65536, 262144, 1048576, 2097152, 4194304, 8388608],
+})
+
+export const aiBlobOffloadTextBytes = new Histogram({
+    name: 'llma_ai_blob_offload_text_bytes',
+    help: 'Post-extraction heavy-prop text size — sizing data for future size-triggered offload',
+    buckets: [4096, 65536, 262144, 1048576, 2097152, 4194304, 8388608],
+})
