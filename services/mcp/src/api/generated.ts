@@ -35994,6 +35994,7 @@ export namespace Schemas {
      * * `hogdesk` - HogDesk
      * * `review_hog` - ReviewHog
      * * `image_builder` - Image Builder
+     * * `github_mention` - GitHub Mention
      */
     export type OriginProductEnum = typeof OriginProductEnum[keyof typeof OriginProductEnum];
 
@@ -36015,6 +36016,7 @@ export namespace Schemas {
       Hogdesk: 'hogdesk',
       ReviewHog: 'review_hog',
       ImageBuilder: 'image_builder',
+      GithubMention: 'github_mention',
     } as const;
 
     /**
@@ -47468,7 +47470,8 @@ export namespace Schemas {
        * * `support_reply` - Support Reply
        * * `hogdesk` - HogDesk
        * * `review_hog` - ReviewHog
-       * * `image_builder` - Image Builder */
+       * * `image_builder` - Image Builder
+       * * `github_mention` - GitHub Mention */
       origin_product?: OriginProductEnum;
       /**
          * Target GitHub repository in `organization/repo` format (e.g. `posthog/posthog-js`).
@@ -60489,7 +60492,8 @@ export namespace Schemas {
        * * `support_reply` - Support Reply
        * * `hogdesk` - HogDesk
        * * `review_hog` - ReviewHog
-       * * `image_builder` - Image Builder */
+       * * `image_builder` - Image Builder
+       * * `github_mention` - GitHub Mention */
       origin_product?: OriginProductEnum;
       /**
          * Target GitHub repository in `organization/repo` format (e.g. `posthog/posthog-js`).
