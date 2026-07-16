@@ -26,6 +26,7 @@ import {
     LogsServicesCreateBody,
     LogsSparklineCreateBody,
     LogsValuesRetrieveQueryParams,
+    OrganizationsProjectsLogsConfigRetrieveParams,
 } from '@/generated/logs/api'
 import { withPostHogUrl, pickResponseFields, omitResponseFields, type WithPostHogUrl } from '@/tools/tool-utils'
 import type { Context, ToolBase, ZodObjectAny } from '@/tools/types'
@@ -642,6 +643,21 @@ const logsSparklineQuery = (): ToolBase<typeof LogsSparklineQuerySchema, Schemas
     },
 })
 
+const LogsConfigGetSchema = OrganizationsProjectsLogsConfigRetrieveParams.omit({ organization_id: true })
+
+const logsConfigGet = (): ToolBase<typeof LogsConfigGetSchema, Schemas.TeamLogsConfig> => ({
+    name: 'logs-config-get',
+    schema: LogsConfigGetSchema,
+    handler: async (context: Context, params: z.infer<typeof LogsConfigGetSchema>) => {
+        const orgId = await context.stateManager.getOrgID()
+        const result = await context.api.request<Schemas.TeamLogsConfig>({
+            method: 'GET',
+            path: `/api/organizations/${encodeURIComponent(String(orgId))}/projects/${encodeURIComponent(String(params.id))}/logs_config/`,
+        })
+        return result
+    },
+})
+
 const QueryLogsSchema = LogsQueryCreateBody
 
 const queryLogs = (): ToolBase<typeof QueryLogsSchema, Schemas._LogsQueryResponse> => ({
@@ -682,5 +698,6 @@ export const GENERATED_TOOLS: Record<string, () => ToolBase<ZodObjectAny>> = {
     'logs-patterns-diff': logsPatternsDiff,
     'logs-services-create': logsServicesCreate,
     'logs-sparkline-query': logsSparklineQuery,
+    'logs-config-get': logsConfigGet,
     'query-logs': queryLogs,
 }
