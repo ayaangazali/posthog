@@ -141,6 +141,13 @@ def github_webhook(request: HttpRequest) -> HttpResponse:
     if event_type in ("issues", "issue_comment"):
         from products.conversations.backend.api.github_events import dispatch_github_event
 
+        if event_type == "issue_comment":
+            # Signals @-mention trigger runs alongside Conversations routing (both consume issue_comment).
+            # Side effect only — enqueues a run when a bot mention lands on a local Signals PR, never raises.
+            from products.signals.backend.github_mention.webhook import handle_github_mention_event
+
+            handle_github_mention_event(request, payload)
+
         return dispatch_github_event(request, event_type, payload)
 
     if event_type == "pull_request":

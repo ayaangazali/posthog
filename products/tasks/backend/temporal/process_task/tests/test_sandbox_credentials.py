@@ -3,7 +3,10 @@ import base64
 import pytest
 from unittest.mock import MagicMock, patch
 
+from parameterized import parameterized
+
 from products.tasks.backend.logic.services.sandbox import ExecutionResult
+from products.tasks.backend.models import Task
 from products.tasks.backend.temporal.process_task.activities.get_task_processing_context import TaskProcessingContext
 from products.tasks.backend.temporal.process_task.sandbox_credentials import (
     DEFAULT_REFRESH_INTERVAL_SECONDS,
@@ -13,6 +16,7 @@ from products.tasks.backend.temporal.process_task.sandbox_credentials import (
     set_git_remote_token,
     update_sandbox_env_file,
 )
+from products.tasks.backend.temporal.process_task.utils import PrAuthorshipMode, get_pr_authorship_mode
 
 
 def _ok(stdout: str = "") -> ExecutionResult:
@@ -462,3 +466,16 @@ class TestLiveSandboxRegistry:
         result = _live_sandboxes_for_user_integration(integration.id)
 
         assert result == [(str(live_run.id), "sb-live", "org/live")]
+
+
+class TestGithubMentionAuthorship:
+    @parameterized.expand(
+        [
+            (Task.OriginProduct.GITHUB_MENTION, PrAuthorshipMode.USER),
+            (Task.OriginProduct.SIGNAL_REPORT, PrAuthorshipMode.BOT),
+            (Task.OriginProduct.USER_CREATED, PrAuthorshipMode.USER),
+        ]
+    )
+    def test_origin_resolves_to_expected_authorship(self, origin, expected) -> None:
+        # Attribution correctness: a mention run must author commits as the user, a signal-report run as the bot.
+        assert get_pr_authorship_mode(Task(origin_product=origin), None) == expected
