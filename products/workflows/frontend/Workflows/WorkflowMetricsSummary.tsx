@@ -1,7 +1,8 @@
 import { useValues } from 'kea'
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 
-import { LemonLabel, LemonTable, LemonTableColumns, Link, SpinnerOverlay } from '@posthog/lemon-ui'
+import { IconArrowRight, IconLetter, IconNotification } from '@posthog/icons'
+import { LemonLabel, LemonTable, LemonTableColumns, LemonTag, Link, SpinnerOverlay } from '@posthog/lemon-ui'
 
 import { getColorVar } from 'lib/colors'
 import { type AppMetricsTimeSeriesResponse } from 'lib/components/AppMetrics/appMetricsLogic'
@@ -11,9 +12,9 @@ import { humanFriendlyNumber } from 'lib/utils/numbers'
 
 import {
     type EmailMetric,
-    WORKFLOW_SUMMARY_METRICS,
     type EmailMetricRow,
     type PushMetricRow,
+    WORKFLOW_SUMMARY_METRICS,
     withDisplayName,
     workflowMetricsSummaryLogic,
     type WorkflowMetricsSummaryLogicProps,
@@ -40,9 +41,7 @@ export function WorkflowMetricsSummary({
         inProgressTotalLoading,
         workflowSummaryTrends,
         emailMetricsRows,
-        emailTotalsByActionIdLoading,
         pushMetricsRows,
-        pushTotalsByActionIdLoading,
         conversionRate,
         conversionStats,
         conversionStatsLoading,
@@ -52,145 +51,126 @@ export function WorkflowMetricsSummary({
         sentSummaryLabel,
     } = useValues(workflowMetricsSummaryLogic(props))
 
-    const emailMetricsColumns: LemonTableColumns<EmailMetricRow> = useMemo(
-        () => [
+    // Email and push don't share a funnel, so each channel gets its own table with the columns that
+    // actually apply — email keeps the delivery→open→click funnel, push surfaces skipped/failed as
+    // first-class columns. A workflow with a single channel just shows that one table.
+    const viewMetricsColumn = useCallback(
+        (id: string): JSX.Element => (
+            <Link onClick={() => onSelectAction?.(id)} className="whitespace-nowrap inline-flex items-center gap-1">
+                View metrics <IconArrowRight />
+            </Link>
+        ),
+        [onSelectAction]
+    )
+
+    const emailColumns: LemonTableColumns<EmailMetricRow> = useMemo(() => {
+        return [
             {
-                title: 'Email',
-                dataIndex: 'email',
-                key: 'email',
-                render: (_, row) =>
-                    onSelectAction ? (
-                        <span
-                            className="cursor-pointer text-link inline-flex items-center gap-1"
-                            onClick={() => onSelectAction(row.id)}
-                            title="View this step's detailed metrics"
-                        >
-                            {row.email} <span aria-hidden="true">→</span>
+                title: 'Step',
+                key: 'step',
+                render: (_, row) => (
+                    <div className="flex items-center gap-2">
+                        <span className="flex text-lg shrink-0 text-secondary">
+                            <IconLetter />
                         </span>
-                    ) : (
-                        row.email
-                    ),
+                        <span className="font-medium">{row.email}</span>
+                    </div>
+                ),
             },
-            {
-                title: 'Sent',
-                dataIndex: 'sent',
-                key: 'sent',
-                align: 'right',
-                render: (_, row) => row.sent.toLocaleString(),
-            },
+            { title: 'Sent', key: 'sent', align: 'right', render: (_, row) => row.sent.toLocaleString() },
             {
                 title: 'Delivered',
-                dataIndex: 'delivered',
                 key: 'delivered',
                 align: 'right',
                 render: (_, row) => row.delivered.toLocaleString(),
             },
+            { title: 'Opened', key: 'opened', align: 'right', render: (_, row) => row.opened.toLocaleString() },
+            { title: 'Clicked', key: 'clicked', align: 'right', render: (_, row) => row.linkClicked.toLocaleString() },
             {
-                title: 'Bounced',
-                dataIndex: 'bounced',
-                key: 'bounced',
-                align: 'right',
-                render: (_, row) =>
-                    onMetricClick && row.bounced > 0 ? (
-                        <span className="cursor-pointer text-link" onClick={() => onMetricClick('email_bounced')}>
-                            {row.bounced.toLocaleString()}
-                        </span>
-                    ) : (
-                        row.bounced.toLocaleString()
-                    ),
+                title: 'Issues',
+                key: 'issues',
+                render: (_, row) => {
+                    const issues = [
+                        {
+                            label: 'bounced',
+                            value: row.bounced,
+                            type: 'danger' as const,
+                            metric: 'email_bounced' as EmailMetric,
+                        },
+                        {
+                            label: 'blocked',
+                            value: row.blocked,
+                            type: 'danger' as const,
+                            metric: 'email_blocked' as EmailMetric,
+                        },
+                        {
+                            label: 'bounce prevented',
+                            value: row.bouncePrevented,
+                            type: 'warning' as const,
+                            metric: 'email_bounce_prevented' as EmailMetric,
+                        },
+                    ].filter((issue) => issue.value > 0)
+                    if (issues.length === 0) {
+                        return <span className="text-muted">—</span>
+                    }
+                    return (
+                        <div className="flex flex-wrap gap-1">
+                            {issues.map((issue) => (
+                                <LemonTag
+                                    key={issue.label}
+                                    type={issue.type}
+                                    onClick={onMetricClick ? () => onMetricClick(issue.metric) : undefined}
+                                    forceClickable={!!onMetricClick}
+                                >
+                                    {issue.value.toLocaleString()} {issue.label}
+                                </LemonTag>
+                            ))}
+                        </div>
+                    )
+                },
             },
-            {
-                title: 'Bounce prevented',
-                dataIndex: 'bouncePrevented',
-                key: 'bouncePrevented',
-                align: 'right',
-                render: (_, row) =>
-                    onMetricClick && row.bouncePrevented > 0 ? (
-                        <span
-                            className="cursor-pointer text-link"
-                            onClick={() => onMetricClick('email_bounce_prevented')}
-                        >
-                            {row.bouncePrevented.toLocaleString()}
-                        </span>
-                    ) : (
-                        row.bouncePrevented.toLocaleString()
-                    ),
-            },
-            {
-                title: 'Blocked',
-                dataIndex: 'blocked',
-                key: 'blocked',
-                align: 'right',
-                render: (_, row) =>
-                    onMetricClick && row.blocked > 0 ? (
-                        <span className="cursor-pointer text-link" onClick={() => onMetricClick('email_blocked')}>
-                            {row.blocked.toLocaleString()}
-                        </span>
-                    ) : (
-                        row.blocked.toLocaleString()
-                    ),
-            },
-            {
-                title: 'Opened',
-                dataIndex: 'opened',
-                key: 'opened',
-                align: 'right',
-                render: (_, row) => row.opened.toLocaleString(),
-            },
-            {
-                title: 'Clicked',
-                dataIndex: 'linkClicked',
-                key: 'linkClicked',
-                align: 'right',
-                render: (_, row) => row.linkClicked.toLocaleString(),
-            },
-        ],
-        [onSelectAction, onMetricClick]
-    )
+            ...(onSelectAction
+                ? [
+                      {
+                          title: '',
+                          key: 'view',
+                          align: 'right' as const,
+                          render: (_: unknown, row: EmailMetricRow) => viewMetricsColumn(row.id),
+                      },
+                  ]
+                : []),
+        ]
+    }, [onSelectAction, onMetricClick, viewMetricsColumn])
 
-    const pushMetricsColumns: LemonTableColumns<PushMetricRow> = useMemo(
-        () => [
+    const pushColumns: LemonTableColumns<PushMetricRow> = useMemo(() => {
+        return [
             {
-                title: 'Push',
-                dataIndex: 'push',
-                key: 'push',
-                render: (_, row) =>
-                    onSelectAction ? (
-                        <span
-                            className="cursor-pointer text-link inline-flex items-center gap-1"
-                            onClick={() => onSelectAction(row.id)}
-                            title="View this step's detailed metrics"
-                        >
-                            {row.push} <span aria-hidden="true">→</span>
+                title: 'Step',
+                key: 'step',
+                render: (_, row) => (
+                    <div className="flex items-center gap-2">
+                        <span className="flex text-lg shrink-0 text-secondary">
+                            <IconNotification />
                         </span>
-                    ) : (
-                        row.push
-                    ),
+                        <span className="font-medium">{row.push}</span>
+                    </div>
+                ),
             },
-            {
-                title: 'Sent',
-                dataIndex: 'sent',
-                key: 'sent',
-                align: 'right',
-                render: (_, row) => row.sent.toLocaleString(),
-            },
-            {
-                title: 'Skipped',
-                dataIndex: 'skipped',
-                key: 'skipped',
-                align: 'right',
-                render: (_, row) => row.skipped.toLocaleString(),
-            },
-            {
-                title: 'Failed',
-                dataIndex: 'failed',
-                key: 'failed',
-                align: 'right',
-                render: (_, row) => row.failed.toLocaleString(),
-            },
-        ],
-        [onSelectAction]
-    )
+            { title: 'Sent', key: 'sent', align: 'right', render: (_, row) => row.sent.toLocaleString() },
+            { title: 'Skipped', key: 'skipped', align: 'right', render: (_, row) => row.skipped.toLocaleString() },
+            { title: 'Failed', key: 'failed', align: 'right', render: (_, row) => row.failed.toLocaleString() },
+            ...(onSelectAction
+                ? [
+                      {
+                          title: '',
+                          key: 'view',
+                          align: 'right' as const,
+                          render: (_: unknown, row: PushMetricRow) => viewMetricsColumn(row.id),
+                      },
+                  ]
+                : []),
+        ]
+    }, [onSelectAction, viewMetricsColumn])
 
     return (
         <>
@@ -312,26 +292,19 @@ export function WorkflowMetricsSummary({
                 )}
             </div>
 
-            <LemonTable
-                columns={emailMetricsColumns}
-                dataSource={emailMetricsRows}
-                loading={emailTotalsByActionIdLoading}
-                rowKey="id"
-                size="small"
-                emptyState="No email actions in this workflow"
-            />
-
-            {/* Push has no delivery/open/click receipts like email — only the three send-time outcomes. */}
-            {pushMetricsRows.length > 0 && (
-                <LemonTable
-                    columns={pushMetricsColumns}
-                    dataSource={pushMetricsRows}
-                    loading={pushTotalsByActionIdLoading}
-                    rowKey="id"
-                    size="small"
-                    emptyState="No push actions in this workflow"
-                />
-            )}
+            {/* A table per channel, since email and push report different metrics. */}
+            {emailMetricsRows.length > 0 ? (
+                <div className="flex flex-col gap-1">
+                    <LemonLabel>Email steps</LemonLabel>
+                    <LemonTable columns={emailColumns} dataSource={emailMetricsRows} rowKey="id" size="small" />
+                </div>
+            ) : null}
+            {pushMetricsRows.length > 0 ? (
+                <div className="flex flex-col gap-1">
+                    <LemonLabel>Push steps</LemonLabel>
+                    <LemonTable columns={pushColumns} dataSource={pushMetricsRows} rowKey="id" size="small" />
+                </div>
+            ) : null}
 
             <AppMetricsTrends appMetricsTrends={workflowSummaryTrends} loading={loading} />
         </>
