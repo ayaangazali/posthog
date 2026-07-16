@@ -419,6 +419,23 @@ export const workflowMetricsSummaryLogic = kea<workflowMetricsSummaryLogicType>(
 
         pushActions: [(s) => [s.workflow], (workflow) => workflow.actions.filter(isPushAction)],
 
+        // Which messaging channels actually produced "sent" metrics in the fetched window. Drives the
+        // channel-aware "sent" summary tile + chart, so a push-only flow doesn't say "Emails sent".
+        messagingChannels: [
+            (s) => [s.appMetricsTrends],
+            (appMetricsTrends): { hasEmail: boolean; hasPush: boolean } => ({
+                hasEmail: !!appMetricsTrends?.series.some((x: { name: string }) => x.name === 'email_sent'),
+                hasPush: !!appMetricsTrends?.series.some((x: { name: string }) => x.name === 'push_sent'),
+            }),
+        ],
+
+        // "Emails sent" for email-only, "Push notifications sent" for push-only, "Messages sent" for both.
+        sentSummaryLabel: [
+            (s) => [s.messagingChannels],
+            ({ hasEmail, hasPush }): string =>
+                hasEmail && hasPush ? 'Messages sent' : hasPush ? 'Push notifications sent' : 'Emails sent',
+        ],
+
         metricNameBySummaryMetric: [
             (s) => [s.appMetricsTrends],
             (appMetricsTrends): Record<WorkflowSummaryMetric, string> =>
@@ -495,41 +512,53 @@ export const workflowMetricsSummaryLogic = kea<workflowMetricsSummaryLogicType>(
                 s.completedTrends,
                 s.metricNameBySummaryMetric,
                 s.getCompletedSingleTrendSeries,
+                s.messagingChannels,
+                s.sentSummaryLabel,
             ],
             (
                 appMetricsTrends,
                 completedTrends,
                 metricNameBySummaryMetric,
-                getCompletedSingleTrendSeries
+                getCompletedSingleTrendSeries,
+                messagingChannels,
+                sentSummaryLabel
             ): AppMetricsTimeSeriesResponse | null => {
                 if (!appMetricsTrends && !completedTrends) {
                     return null
                 }
 
                 const labels = appMetricsTrends?.labels ?? completedTrends?.labels ?? []
-                const completedValues =
-                    getCompletedSingleTrendSeries('succeeded')?.series[0]?.values ??
-                    Array.from({ length: labels.length }, () => 0)
+                const zero = (): number[] => Array.from({ length: labels.length }, () => 0)
+                const seriesFor = (metricName: string): number[] =>
+                    appMetricsTrends?.series.find((x: { name: string }) => x.name === metricName)?.values ?? zero()
+                const completedValues = getCompletedSingleTrendSeries('succeeded')?.series[0]?.values ?? zero()
 
                 return {
                     labels,
-                    series: SUMMARY_METRIC_KEYS.map((summaryMetric) => {
+                    series: SUMMARY_METRIC_KEYS.flatMap((summaryMetric) => {
                         if (summaryMetric === 'completed') {
-                            return {
-                                name: WORKFLOW_SUMMARY_METRICS.completed.name,
-                                values: completedValues,
+                            return [{ name: WORKFLOW_SUMMARY_METRICS.completed.name, values: completedValues }]
+                        }
+
+                        // Channel-aware "sent": split into separate Emails + Push notifications lines when
+                        // both channels sent, otherwise a single line labelled for whichever channel did.
+                        if (summaryMetric === 'persons_messaged') {
+                            const { hasEmail, hasPush } = messagingChannels
+                            if (hasEmail && hasPush) {
+                                return [
+                                    { name: 'Emails', values: seriesFor('email_sent') },
+                                    { name: 'Push notifications', values: seriesFor('push_sent') },
+                                ]
                             }
+                            return [{ name: sentSummaryLabel, values: seriesFor(hasPush ? 'push_sent' : 'email_sent') }]
                         }
 
-                        const selectedMetricName = metricNameBySummaryMetric[summaryMetric]
-                        const matchedSeries = appMetricsTrends?.series.find(
-                            (series: { name: string }) => series.name === selectedMetricName
-                        )
-
-                        return {
-                            name: WORKFLOW_SUMMARY_METRICS[summaryMetric].name,
-                            values: matchedSeries?.values ?? Array.from({ length: labels.length }, () => 0),
-                        }
+                        return [
+                            {
+                                name: WORKFLOW_SUMMARY_METRICS[summaryMetric].name,
+                                values: seriesFor(metricNameBySummaryMetric[summaryMetric]),
+                            },
+                        ]
                     }),
                 }
             },
@@ -641,6 +670,30 @@ export function subtractSeries(
                     subtrahendSeries?.series[0]?.values,
                     labels.length
                 ),
+            },
+        ],
+    }
+}
+
+// Element-wise sum of two single-series trends into one line. Used to combine email + push into a
+// single "Messages sent" tile on flows that send both.
+export function sumSeries(
+    a: AppMetricsTimeSeriesResponse | null,
+    b: AppMetricsTimeSeriesResponse | null,
+    displayName: string
+): AppMetricsTimeSeriesResponse | null {
+    if (!a && !b) {
+        return null
+    }
+    const labels = a?.labels ?? b?.labels ?? []
+    const av = a?.series[0]?.values
+    const bv = b?.series[0]?.values
+    return {
+        labels,
+        series: [
+            {
+                name: displayName,
+                values: Array.from({ length: labels.length }, (_, i) => (av?.[i] ?? 0) + (bv?.[i] ?? 0)),
             },
         ],
     }

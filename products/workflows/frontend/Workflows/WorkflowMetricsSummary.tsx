@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import { LemonLabel, LemonTable, LemonTableColumns, Link, SpinnerOverlay } from '@posthog/lemon-ui'
 
 import { getColorVar } from 'lib/colors'
+import { type AppMetricsTimeSeriesResponse } from 'lib/components/AppMetrics/appMetricsLogic'
 import { AppMetricsTrends } from 'lib/components/AppMetrics/AppMetricsTrends'
 import { AppMetricSummary } from 'lib/components/AppMetrics/AppMetricSummary'
 import { humanFriendlyNumber } from 'lib/utils/numbers'
@@ -14,6 +15,7 @@ import {
     type EmailMetricRow,
     type PushMetricRow,
     withDisplayName,
+    sumSeries,
     workflowMetricsSummaryLogic,
     type WorkflowMetricsSummaryLogicProps,
 } from './workflowMetricsSummaryLogic'
@@ -47,6 +49,8 @@ export function WorkflowMetricsSummary({
         conversionStatsLoading,
         convertedUsersUrl,
         hasConversionGoal,
+        messagingChannels,
+        sentSummaryLabel,
     } = useValues(workflowMetricsSummaryLogic(props))
 
     const emailMetricsColumns: LemonTableColumns<EmailMetricRow> = useMemo(
@@ -208,21 +212,47 @@ export function WorkflowMetricsSummary({
                     }
                     const metric = WORKFLOW_SUMMARY_METRICS[summaryMetric]
                     const metricName = metricNameBySummaryMetric[summaryMetric]
-                    const timeSeries =
-                        summaryMetric === 'completed'
-                            ? withDisplayName(getCompletedSingleTrendSeries('succeeded'), metric.name)
-                            : withDisplayName(getSingleTrendSeries(metricName), metric.name)
 
-                    const previousPeriodTimeSeries =
-                        summaryMetric === 'completed'
-                            ? withDisplayName(getCompletedSingleTrendSeries('succeeded', true), metric.name)
-                            : withDisplayName(getSingleTrendSeries(metricName, true), metric.name)
+                    // The "sent" tile is channel-aware: email-only and push-only get their own label,
+                    // and a flow that sends both sums the two channels into one "Messages sent" total.
+                    const isSent = summaryMetric === 'persons_messaged'
+                    const { hasEmail, hasPush } = messagingChannels
+                    const name = isSent ? sentSummaryLabel : metric.name
+                    const description =
+                        isSent && hasEmail && hasPush
+                            ? 'Total number of messages (emails and push notifications) attempted to be sent by this workflow'
+                            : isSent && hasPush
+                              ? 'Total number of push notifications attempted to be sent by this workflow'
+                              : metric.description
+                    const sentSeries = (previous?: boolean): AppMetricsTimeSeriesResponse | null =>
+                        hasEmail && hasPush
+                            ? sumSeries(
+                                  getSingleTrendSeries('email_sent', previous),
+                                  getSingleTrendSeries('push_sent', previous),
+                                  name
+                              )
+                            : withDisplayName(
+                                  getSingleTrendSeries(hasPush ? 'push_sent' : 'email_sent', previous),
+                                  name
+                              )
+
+                    const timeSeries = isSent
+                        ? sentSeries()
+                        : summaryMetric === 'completed'
+                          ? withDisplayName(getCompletedSingleTrendSeries('succeeded'), name)
+                          : withDisplayName(getSingleTrendSeries(metricName), name)
+
+                    const previousPeriodTimeSeries = isSent
+                        ? sentSeries(true)
+                        : summaryMetric === 'completed'
+                          ? withDisplayName(getCompletedSingleTrendSeries('succeeded', true), name)
+                          : withDisplayName(getSingleTrendSeries(metricName, true), name)
 
                     return (
                         <AppMetricSummary
                             key={summaryMetric}
-                            name={metric.name}
-                            description={metric.description}
+                            name={name}
+                            description={description}
                             loading={loading}
                             timeSeries={timeSeries}
                             previousPeriodTimeSeries={previousPeriodTimeSeries}
