@@ -6,6 +6,7 @@ import { lemonToast } from '@posthog/lemon-ui'
 
 import api from 'lib/api'
 import { dataColorVars } from 'lib/colors'
+import { objectsEqual } from 'lib/utils/objects'
 
 import { AggregatedSpanRow, DateRange } from '~/queries/schema/schema-general'
 
@@ -386,8 +387,11 @@ export const tracingOperationSceneLogic = kea<tracingOperationSceneLogicType>([
 
     actionToUrl(({ values }) => {
         const withSelectionParams = (): [string, Record<string, any>, Record<string, any>, { replace: boolean }] => {
-            const { min, max, sample, ...rest } = router.values.searchParams
+            const { min, max, sample, dateRange, ...rest } = router.values.searchParams
             const params: Record<string, any> = { ...rest }
+            if (!objectsEqual(values.dateRange, DEFAULT_DATE_RANGE)) {
+                params.dateRange = JSON.stringify(values.dateRange)
+            }
             if (values.durationSelection) {
                 params.min = values.durationSelection.minNs
                 params.max = values.durationSelection.maxNs
@@ -398,6 +402,7 @@ export const tracingOperationSceneLogic = kea<tracingOperationSceneLogicType>([
             return [router.values.location.pathname, params, router.values.hashParams, { replace: true }]
         }
         return {
+            setDateRange: withSelectionParams,
             setDurationSelection: withSelectionParams,
             setSampleIndex: withSelectionParams,
         }
@@ -408,10 +413,24 @@ export const tracingOperationSceneLogic = kea<tracingOperationSceneLogicType>([
             if (method === 'REPLACE') {
                 return // our own actionToUrl writes
             }
+            // Restore the date range first: setDateRange resets sampleIndex.
+            if (searchParams.dateRange) {
+                try {
+                    const dateRange =
+                        typeof searchParams.dateRange === 'string'
+                            ? JSON.parse(searchParams.dateRange)
+                            : searchParams.dateRange
+                    if (!objectsEqual(dateRange, values.dateRange)) {
+                        actions.setDateRange(dateRange)
+                    }
+                } catch {
+                    // Malformed param — keep the current range.
+                }
+            }
             const minNs = parseInt(String(searchParams.min), 10)
             const maxNs = parseInt(String(searchParams.max), 10)
             const selection = !isNaN(minNs) && !isNaN(maxNs) ? { minNs, maxNs } : null
-            if (JSON.stringify(selection) !== JSON.stringify(values.durationSelection)) {
+            if (!objectsEqual(selection, values.durationSelection)) {
                 actions.setDurationSelection(selection)
             }
             const sample = parseInt(String(searchParams.sample), 10)
