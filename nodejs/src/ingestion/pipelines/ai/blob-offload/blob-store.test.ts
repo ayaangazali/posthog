@@ -82,15 +82,23 @@ describe('S3BlobStore', () => {
         await expect(store().ensureStored(2, BLOB)).rejects.toThrow('s3 down')
     })
 
-    it('does not count HEAD NotFound as S3 failure (normal miss flow)', async () => {
-        const headLabels = aiBlobOffloadS3Errors.labels('head')
-        const incSpy = jest.spyOn(headLabels, 'inc')
+    it('does not count HEAD NotFound as S3 failure (normal miss flow) but counts genuine HEAD errors', async () => {
+        aiBlobOffloadS3Errors.reset()
+        let headErrors = (await aiBlobOffloadS3Errors.get()).values.find((v) => v.labels.op === 'head')?.value ?? 0
+        expect(headErrors).toBe(0)
 
         send.mockRejectedValueOnce(notFound()).mockResolvedValueOnce({})
         const outcome = await store().ensureStored(2, BLOB)
-
         expect(outcome).toBe('uploaded')
-        expect(incSpy).not.toHaveBeenCalled()
+
+        headErrors = (await aiBlobOffloadS3Errors.get()).values.find((v) => v.labels.op === 'head')?.value ?? 0
+        expect(headErrors).toBe(0)
+
+        send.mockRejectedValueOnce(new Error('s3 down'))
+        await expect(store().ensureStored(2, BLOB)).rejects.toThrow('s3 down')
+
+        headErrors = (await aiBlobOffloadS3Errors.get()).values.find((v) => v.labels.op === 'head')?.value ?? 0
+        expect(headErrors).toBe(1)
     })
 
     it('returns null when the bucket is unset (offload disabled)', () => {
