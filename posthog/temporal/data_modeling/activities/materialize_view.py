@@ -63,6 +63,7 @@ _clickhouse_query_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CLICKHOUSE_QUERIE
 # activity, versus terabyte-scale retry reads if a cap breach stays untyped and retryable.
 QUERY_LOG_CLASSIFY_ATTEMPTS = 4
 QUERY_LOG_CLASSIFY_WAIT_SECONDS = 5.0
+QUERY_LOG_CLASSIFY_REQUEST_TIMEOUT_SECONDS = 2.0
 
 _QUERY_LOG_EXCEPTION_CODE_TO_ERROR: dict[int, type[ClickHouseError]] = {
     307: ClickHouseTooManyBytesError,
@@ -84,11 +85,12 @@ async def _get_query_log_exception(client, query_id: str) -> tuple[int, str] | N
             """
 
     try:
-        results = await client.read_query_as_jsonl(
-            query,
-            query_parameters={"query_id": query_id, "cluster_name": settings.CLICKHOUSE_CLUSTER},
-            query_id=f"{query_id}-CLASSIFY-FAILURE",
-        )
+        async with asyncio.timeout(QUERY_LOG_CLASSIFY_REQUEST_TIMEOUT_SECONDS):
+            results = await client.read_query_as_jsonl(
+                query,
+                query_parameters={"query_id": query_id, "cluster_name": settings.CLICKHOUSE_CLUSTER},
+                query_id=f"{query_id}-CLASSIFY-FAILURE",
+            )
     except Exception:
         return None
 
@@ -357,20 +359,6 @@ async def _write_empty_parquet_for_zero_rows(table_uri: str, schema: pa.Schema, 
     return file_uri
 
 
-async def _read_arrow_schema_from_query(client, query: str, query_parameters: dict) -> pa.Schema:
-    """Fetch just the Arrow schema for a query that returned zero rows.
-
-    The streaming reader hides the schema when there are no batches, so we re-issue the
-    same query and read the schema message that ClickHouse always sends in ArrowStream
-    format. The response for a zero-row result is just the schema + EOS, so reading the
-    full body is cheap.
-    """
-    async with client.apost_query(query=query, query_parameters=query_parameters, query_id=str(uuid.uuid4())) as resp:
-        data = await resp.content.read()
-    reader = pa.ipc.open_stream(pa.BufferReader(data))
-    return reader.schema
-
-
 async def hogql_table(query: str, team: Team, logger: FilteringBoundLogger, view_name: str | None = None):
     """Execute a HogQL query and yield batches of results."""
     query_node = parse_select(query)
@@ -495,11 +483,20 @@ async def hogql_table(query: str, team: Team, logger: FilteringBoundLogger, view
         batches = []
         batches_size = 0
         yielded_results = False
+        arrow_schema: pa.Schema | None = None
         ch_typings_pairs = [(column_name, column_type) for column_name, column_type, _ in query_typings]
         query_id = str(uuid.uuid4())
+
+        def capture_arrow_schema(schema: pa.Schema) -> None:
+            nonlocal arrow_schema
+            arrow_schema = schema
+
         try:
             async for batch in client.astream_query_as_arrow(
-                arrow_printed, query_parameters=context.values, query_id=query_id
+                arrow_printed,
+                query_parameters=context.values,
+                query_id=query_id,
+                on_schema=capture_arrow_schema,
             ):
                 batches_size = batches_size + batch.nbytes
                 batches.append(batch)
@@ -530,8 +527,11 @@ async def hogql_table(query: str, team: Team, logger: FilteringBoundLogger, view
             await logger.adebug(
                 "Query returned zero batches; yielding empty batch with schema for queryable empty table"
             )
-            schema = await _read_arrow_schema_from_query(client, arrow_printed, context.values)
-            empty_batch = pa.RecordBatch.from_arrays([pa.array([], type=field.type) for field in schema], schema=schema)
+            if arrow_schema is None:
+                raise EmptyHogQLResponseColumnsError()
+            empty_batch = pa.RecordBatch.from_arrays(
+                [pa.array([], type=field.type) for field in arrow_schema], schema=arrow_schema
+            )
             yield (empty_batch, ch_typings_pairs)
 
 

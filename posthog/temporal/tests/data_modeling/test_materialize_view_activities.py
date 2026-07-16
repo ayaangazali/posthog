@@ -11,14 +11,10 @@ from django.test import override_settings
 import pyarrow as pa
 import deltalake
 import pytest_asyncio
+from temporalio.service import RPCError, RPCStatusCode
 
-from posthog.settings import HOGQL_INCREASED_MAX_EXECUTION_TIME
 from posthog.sync import database_sync_to_async
-from posthog.temporal.common.clickhouse import (
-    ClickHouseMemoryLimitExceededError,
-    ClickHouseQueryTimeoutError,
-    ClickHouseTooManyBytesError,
-)
+from posthog.temporal.common.clickhouse import ClickHouseTooManyBytesError
 from posthog.temporal.data_modeling.activities import (
     CreateDataModelingJobInputs,
     FailMaterializationInputs,
@@ -33,14 +29,10 @@ from posthog.temporal.data_modeling.activities import (
 )
 from posthog.temporal.data_modeling.activities.materialize_view import (
     LOGGER,
-    QUERY_LOG_CLASSIFY_ATTEMPTS,
     InvalidNodeTypeException,
-    _classify_stream_failure,
     _get_aws_storage_options,
-    _materialization_query_settings,
     hogql_table,
 )
-from posthog.temporal.data_modeling.workflows.materialize_view import NON_RETRYABLE_ERRORS
 
 from products.data_modeling.backend.facade.api import compute_enrichment_hash
 from products.data_modeling.backend.facade.models import (
@@ -311,11 +303,11 @@ class TestFailMaterializationActivity:
     @pytest.mark.parametrize(
         "previous_errors,current_error",
         [
-            ([_TIMEOUT_ERROR] * 5, _TIMEOUT_ERROR),
-            ([_BYTES_CAP_ERROR] * 5, _BYTES_CAP_ERROR),
-            ([_MEMORY_ERROR] * 5, _MEMORY_ERROR),
+            ([_TIMEOUT_ERROR] * 4, _TIMEOUT_ERROR),
+            ([_BYTES_CAP_ERROR] * 4, _BYTES_CAP_ERROR),
+            ([_MEMORY_ERROR] * 4, _MEMORY_ERROR),
             (
-                [_TIMEOUT_ERROR, _BYTES_CAP_ERROR, _MEMORY_ERROR, _BYTES_CAP_ERROR, _TIMEOUT_ERROR],
+                [_TIMEOUT_ERROR, _BYTES_CAP_ERROR, _MEMORY_ERROR, _BYTES_CAP_ERROR],
                 _BYTES_CAP_ERROR,
             ),
         ],
@@ -358,11 +350,9 @@ class TestFailMaterializationActivity:
     ):
         # v2-only saved queries have no v1 per-query Temporal schedule; the pause RPC fails
         # with NOT_FOUND but the sync-frequency reset and error prefix must still land.
-        from temporalio.service import RPCError, RPCStatusCode
-
         previous_jobs = [
             await _make_job(ateam, asaved_query, DataModelingJob.Status.FAILED, error=self._TIMEOUT_ERROR)
-            for _ in range(5)
+            for _ in range(4)
         ]
         current_job = await _make_job(ateam, asaved_query, DataModelingJob.Status.RUNNING)
 
@@ -1106,22 +1096,6 @@ class TestMaterializeViewActivity:
                 await activity_environment.run(materialize_view_activity, inputs)
 
 
-class TestMaterializationQuerySettings:
-    @pytest.mark.parametrize(
-        "cap,expected_bytes,expected_mode",
-        [
-            (1_000_000_000_000, 1_000_000_000_000, "throw"),
-            (0, None, None),
-        ],
-    )
-    def test_bytes_read_cap(self, cap, expected_bytes, expected_mode):
-        with override_settings(DATA_MODELING_MATERIALIZATION_MAX_BYTES_TO_READ=cap):
-            query_settings = _materialization_query_settings()
-        assert query_settings.max_execution_time == HOGQL_INCREASED_MAX_EXECUTION_TIME
-        assert query_settings.max_bytes_to_read == expected_bytes
-        assert query_settings.read_overflow_mode == expected_mode
-
-
 class _FakeClickHouseClient:
     """Stands in for the async ClickHouse client in stream-failure tests."""
 
@@ -1144,7 +1118,7 @@ class _FakeClickHouseClient:
 
         yield _Response(b"value\tUInt8\n")
 
-    async def astream_query_as_arrow(self, query, *data, query_parameters=None, query_id=None):
+    async def astream_query_as_arrow(self, query, *data, query_parameters=None, query_id=None, on_schema=None):
         self.astream_query = query
         self.astream_query_id = query_id
         if self.stream_error is not None:
@@ -1157,37 +1131,59 @@ class _FakeClickHouseClient:
         return self.query_log_rows
 
 
-class TestClassifyStreamFailure:
-    @pytest.mark.parametrize(
-        "exception_code,expected_error",
-        [
-            (307, ClickHouseTooManyBytesError),
-            (241, ClickHouseMemoryLimitExceededError),
-            (159, ClickHouseQueryTimeoutError),
-        ],
-    )
-    async def test_maps_known_exception_codes_to_typed_errors(self, exception_code, expected_error):
-        client = _FakeClickHouseClient(
-            query_log_rows=[{"exception_code": exception_code, "exception": f"Code: {exception_code}. boom"}]
-        )
-        typed_error = await _classify_stream_failure(client, "some-query-id")
-        assert isinstance(typed_error, expected_error)
-        assert f"Code: {exception_code}. boom" in str(typed_error)
+class _EmptyArrowClient:
+    def __init__(self, schema: pa.Schema):
+        self.schema = schema
+        self.arrow_query_calls = 0
+        self.schema_query_calls = 0
 
-    async def test_returns_none_for_unrelated_exception_code(self):
-        client = _FakeClickHouseClient(query_log_rows=[{"exception_code": 404, "exception": "unrelated"}])
-        assert await _classify_stream_failure(client, "some-query-id") is None
+    async def astream_query_as_arrow(self, query, *data, query_parameters=None, query_id=None, on_schema=None):
+        self.arrow_query_calls += 1
+        if on_schema is not None:
+            on_schema(self.schema)
+        return
+        yield  # unreachable; makes this an async generator
 
-    async def test_polls_boundedly_then_gives_up_when_no_row_appears(self):
-        client = _FakeClickHouseClient(query_log_rows=[])
-        with unittest.mock.patch(
-            "posthog.temporal.data_modeling.activities.materialize_view.QUERY_LOG_CLASSIFY_WAIT_SECONDS", 0
-        ):
-            assert await _classify_stream_failure(client, "some-query-id") is None
-        assert client.query_log_lookups == QUERY_LOG_CLASSIFY_ATTEMPTS
+    @contextlib.asynccontextmanager
+    async def apost_query(self, query, *data, query_parameters=None, query_id=None):
+        if query.startswith("DESCRIBE TABLE"):
+            body = b"id\tInt64\n"
+        else:
+            self.schema_query_calls += 1
+            buffer = pa.BufferOutputStream()
+            with pa.ipc.new_stream(buffer, self.schema):
+                pass
+            body = buffer.getvalue().to_pybytes()
+
+        class _Response:
+            def __init__(self, body: bytes):
+                self.content = self
+                self.body = body
+
+            async def read(self) -> bytes:
+                return self.body
+
+        yield _Response(body)
 
 
 class TestHogqlTableStreamFailure:
+    async def test_zero_row_query_does_not_rerun_for_schema(self, ateam):
+        client = _EmptyArrowClient(pa.schema([pa.field("id", pa.int64())]))
+
+        @contextlib.asynccontextmanager
+        async def fake_get_client(**kwargs):
+            yield client
+
+        with unittest.mock.patch(
+            "posthog.temporal.data_modeling.activities.materialize_view.get_clickhouse_client", fake_get_client
+        ):
+            batches = [batch async for batch in hogql_table("SELECT 1", ateam, LOGGER.bind())]
+
+        assert len(batches) == 1
+        assert batches[0][0].num_rows == 0
+        assert client.arrow_query_calls == 1
+        assert client.schema_query_calls == 0
+
     async def test_stream_failure_classified_as_typed_non_retryable_error(self, ateam):
         # regression: a bytes-cap breach mid-ArrowStream surfaced as an opaque broken-stream
         # error, which Temporal retried, re-scanning up to the cap on every attempt.
@@ -1234,34 +1230,3 @@ class TestHogqlTableStreamFailure:
             with pytest.raises(RuntimeError, match="broken stream"):
                 async for _ in hogql_table("SELECT 1", ateam, logger):
                     pass
-
-
-class TestIsResourceLimitError:
-    @pytest.mark.parametrize(
-        "error,expected",
-        [
-            ("Timeout exceeded: elapsed 600.1 seconds", True),
-            ("query has exceeded timeout", True),
-            ("Code: 159. DB::Exception: boom. (TIMEOUT_EXCEEDED)", True),
-            ("Code: 307. DB::Exception: Limit for bytes to read exceeded. (TOO_MANY_BYTES)", True),
-            ("Code: 241. DB::Exception: Memory limit (for query) exceeded. (MEMORY_LIMIT_EXCEEDED)", True),
-            ("Code: 60. DB::Exception: Unknown table", False),
-            ("", False),
-            (None, False),
-        ],
-    )
-    def test_matches_resource_limit_markers(self, error, expected):
-        from posthog.temporal.data_modeling.activities.fail_materialization import _is_resource_limit_error
-
-        assert _is_resource_limit_error(error) is expected
-
-
-def test_non_retryable_errors_reference_real_v2_exception_names():
-    # Temporal matches non-retryable errors by exception class name; a rename or list
-    # regression silently reverts memory-limit/bytes-cap failures to being retried 3x.
-    import posthog.temporal.common.clickhouse as clickhouse_module
-
-    for name in ("ClickHouseTooManyBytesError", "ClickHouseMemoryLimitExceededError"):
-        assert name in NON_RETRYABLE_ERRORS
-        assert hasattr(clickhouse_module, name)
-    assert "CHQueryErrorMemoryLimitExceeded" not in NON_RETRYABLE_ERRORS

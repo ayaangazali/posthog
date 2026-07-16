@@ -108,7 +108,15 @@ def should_pause_schedule_for_resource_limits(saved_query_id: UUID, current_job_
     limit). Mixed streaks count: each kind means the query is too big for its budget,
     and re-running it on schedule only burns the budget again.
     """
-    return _consecutive_failures_matching(saved_query_id, current_job_id, _is_resource_limit_error)
+    current_job = DataModelingJob.objects.get(id=current_job_id)
+    previous_jobs = list(_get_previous_jobs(saved_query_id, current_job_id, CONSECUTIVE_TIMEOUTS_TO_PAUSE - 1))
+    matching_jobs = [current_job, *previous_jobs]
+    count = 0
+    for job in matching_jobs:
+        if job.status != DataModelingJobStatus.FAILED or not _is_resource_limit_error(job.error):
+            break
+        count += 1
+    return count == CONSECUTIVE_TIMEOUTS_TO_PAUSE, count
 
 
 @dataclasses.dataclass
