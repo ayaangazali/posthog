@@ -1,4 +1,4 @@
-import { Counter } from 'prom-client'
+import { Counter, Histogram } from 'prom-client'
 
 export const aiCostLookupCounter = new Counter({
     name: 'llma_ai_cost_lookup_total',
@@ -58,4 +58,17 @@ export const aiOtelGroupsCounter = new Counter({
     name: 'llma_ai_otel_groups_total',
     help: 'Outcome of decoding a string-valued $groups attribute back into an object',
     labelNames: ['outcome'],
+})
+
+export const aiBlobOffloadS3Duration = new Histogram({
+    name: 'llma_ai_blob_offload_s3_request_duration_seconds',
+    help: 'Latency of S3 requests made by the AI blob offload store',
+    labelNames: ['op'],
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+})
+
+export const aiBlobOffloadS3Errors = new Counter({
+    name: 'llma_ai_blob_offload_s3_errors_total',
+    help: 'S3 request failures in the AI blob offload store',
+    labelNames: ['op'],
 })
