@@ -24,7 +24,7 @@ export interface SqlChartModel<TConfig> {
 }
 
 export function useSqlChartModel<TConfig extends object>(
-    { xData, yData, visualizationType, chartSettings, dashboardId, goalLines }: LineGraphProps,
+    { xData, yData, visualizationType, chartSettings, dashboardId, goalLines, hiddenSeriesKeys }: LineGraphProps,
     buildConfig: (args: BuildBarConfigArgs) => TConfig
 ): SqlChartModel<TConfig> | null {
     const { timezone } = useValues(teamLogic)
@@ -54,9 +54,10 @@ export function useSqlChartModel<TConfig extends object>(
                       goalLines,
                       visualizationType,
                       ySeriesData,
+                      hiddenSeriesKeys,
                   })
                 : undefined,
-        [xData, chartSettings, timezone, goalLines, visualizationType, buildConfig, ySeriesData]
+        [xData, chartSettings, timezone, goalLines, visualizationType, buildConfig, ySeriesData, hiddenSeriesKeys]
     )
 
     if (!xData || !ySeriesData || series.length === 0 || !config) {

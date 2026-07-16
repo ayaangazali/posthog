@@ -442,6 +442,7 @@ export interface dataVisualizationLogicValues {
     dataVisualizationProps: DataVisualizationLogicProps
     effectiveVisualizationType: ChartDisplayType
     hasDateTimeColumns: boolean
+    hiddenSeriesKeys: string[]
     isChartSettingsPanelOpen: boolean
     isColumnPinned: (columnName: string) => boolean
     isPinningEnabled: boolean
@@ -533,6 +534,9 @@ export interface dataVisualizationLogicActions {
     }
     toggleColumnPin: (columnName: string) => {
         columnName: string
+    }
+    toggleHiddenSeriesKey: (seriesKey: string) => {
+        seriesKey: string
     }
     updateChartSettings: (settings: ChartSettings) => {
         settings: ChartSettings
@@ -835,6 +839,10 @@ export const dataVisualizationLogic = kea<dataVisualizationLogicType>([
         setConditionalFormattingRulesPanelActiveKeys: (keys: string[]) => ({ keys }),
         toggleColumnPin: (columnName: string) => ({ columnName }),
         setTransposeResults: (transpose: boolean) => ({ transpose }),
+        // Ephemeral per-view series visibility for line/area/bar charts. Deliberately NOT routed
+        // through setQuery/updateChartSettings, so hidden series reset on reload / remount and never
+        // mutate the saved insight. `seriesKey` must equal the chart's getSeriesKey output.
+        toggleHiddenSeriesKey: (seriesKey: string) => ({ seriesKey }),
         _setQuery: (node: DataVisualizationNode) => ({ node }),
     })),
     reducers(({ props }) => ({
@@ -1134,6 +1142,15 @@ export const dataVisualizationLogic = kea<dataVisualizationLogicType>([
                     }
                     return [...state, columnName]
                 },
+            },
+        ],
+        // Series keys the viewer has toggled off. Ephemeral (see toggleHiddenSeriesKey) — no
+        // persistence, no query mutation; resets when the logic unmounts.
+        hiddenSeriesKeys: [
+            [] as string[],
+            {
+                toggleHiddenSeriesKey: (state, { seriesKey }) =>
+                    state.includes(seriesKey) ? state.filter((key) => key !== seriesKey) : [...state, seriesKey],
             },
         ],
     })),

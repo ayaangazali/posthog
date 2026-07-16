@@ -184,6 +184,7 @@ function InternalDataTableVisualization(props: DataTableVisualizationProps): JSX
         dashboardId,
         dataVisualizationProps,
         presetChartHeight,
+        hiddenSeriesKeys,
     } = useValues(dataVisualizationLogic)
 
     const { seriesBreakdownData } = useValues(seriesBreakdownLogic({ key: dataVisualizationProps.key }))
@@ -269,6 +270,7 @@ function InternalDataTableVisualization(props: DataTableVisualizationProps): JSX
                 dashboardId={dashboardId}
                 goalLines={[...alertThresholdLines, ...goalLines]}
                 presetChartHeight={presetChartHeight}
+                hiddenSeriesKeys={hiddenSeriesKeys}
             />
         )
     } else if (effectiveVisualizationType === ChartDisplayType.ActionsPie) {

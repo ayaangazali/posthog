@@ -530,4 +530,20 @@ describe('dataVisualizationLogic', () => {
 
         expect(queryWithAxisSettings.chartSettings?.yAxis?.[0].settings?.formatting?.decimalPlaces).toBeUndefined()
     })
+
+    it('toggles ephemeral hidden series keys and keeps them across chart-settings / visualization changes', async () => {
+        logic.actions.toggleHiddenSeriesKey('Events-0')
+        logic.actions.toggleHiddenSeriesKey('Recordings-3')
+        await expectLogic(logic).toMatchValues({ hiddenSeriesKeys: ['Events-0', 'Recordings-3'] })
+
+        // Toggling an already-hidden key shows it again.
+        logic.actions.toggleHiddenSeriesKey('Events-0')
+        await expectLogic(logic).toMatchValues({ hiddenSeriesKeys: ['Recordings-3'] })
+
+        // Visibility is per-view, not per-query-edit: settings / display changes must not reset it,
+        // else hidden series would reappear whenever the chart re-renders.
+        logic.actions.updateChartSettings({ showLegend: true })
+        logic.actions.setVisualizationType(ChartDisplayType.ActionsBar)
+        await expectLogic(logic).toMatchValues({ hiddenSeriesKeys: ['Recordings-3'] })
+    })
 })

@@ -87,7 +87,10 @@ export function hasMixedSeriesTypes(
 const getSeriesLabel = (series: SqlLineYSeries): string =>
     series.settings?.display?.label || ('name' in series ? series.name : series.column.name)
 
-const getSeriesKey = (series: SqlLineYSeries, index: number): string =>
+/** Stable identity for a y-series: its breakdown value, else `<column name>-<index>`. Shared by the
+ *  chart config, the trend-line configs, and any UI that toggles series visibility (the account
+ *  billing chips) so all sides agree on which series a key refers to. */
+export const getSeriesKey = (series: SqlLineYSeries, index: number): string =>
     'breakdownValue' in series ? series.breakdownValue : `${series.column.name}-${index}`
 
 /** Shares {@link getSeriesKey} with {@link buildSeries} so each trend line's `seriesKey` matches its source series. */
@@ -332,6 +335,8 @@ interface BuildConfigArgs {
     timezone: string
     goalLines?: GoalLine[]
     ySeriesData?: SqlLineYSeries[] | null
+    /** Series keys (see {@link getSeriesKey}) the viewer has toggled off; excluded + rescaled. */
+    hiddenSeriesKeys?: string[]
 }
 
 export interface BuildBarConfigArgs extends BuildConfigArgs {
@@ -381,8 +386,17 @@ function buildYAxisConfig(
     }
 }
 
-function buildLegendConfig(chartSettings: ChartSettings): ChartLegendConfig {
-    return { show: chartSettings.showLegend ?? false, position: 'top', interactive: true }
+/** `hiddenSeriesKeys` drives quill's controlled `hiddenKeys`: listed series are excluded from
+ *  drawing, scales, and the tooltip, and the rest rescale into the freed space — applied whether or
+ *  not the legend UI is shown (`show` only gates the legend rendering). Only set when non-empty so
+ *  charts with an interactive native legend keep their uncontrolled toggle behavior. */
+function buildLegendConfig(chartSettings: ChartSettings, hiddenSeriesKeys?: string[]): ChartLegendConfig {
+    return {
+        show: chartSettings.showLegend ?? false,
+        position: 'top',
+        interactive: true,
+        ...(hiddenSeriesKeys && hiddenSeriesKeys.length > 0 ? { hiddenKeys: hiddenSeriesKeys } : {}),
+    }
 }
 
 /** The X/Y axis-border toggles map onto quill's per-edge axis lines — undefined when both are on
@@ -419,6 +433,7 @@ export function buildLineChartConfig({
     timezone,
     goalLines,
     ySeriesData,
+    hiddenSeriesKeys,
 }: BuildConfigArgs): TimeSeriesLineChartConfig {
     const leftSeries = seriesForAxis(ySeriesData, 'left')
     const rightSeries = seriesForAxis(ySeriesData, 'right')
@@ -445,7 +460,7 @@ export function buildLineChartConfig({
         goalLines: schemaGoalLinesToConfigs(goalLines),
         showAxisLines: buildAxisLinesConfig(chartSettings),
         trendLines: buildTrendLineConfigs(ySeriesData),
-        legend: buildLegendConfig(chartSettings),
+        legend: buildLegendConfig(chartSettings, hiddenSeriesKeys),
         valueLabels: buildValueLabelsConfig(chartSettings, ySeriesData),
         tooltip: {
             ...buildSqlTooltipConfig(chartSettings, ySeriesData),
@@ -461,6 +476,7 @@ export function buildBarChartConfig({
     goalLines,
     visualizationType,
     ySeriesData,
+    hiddenSeriesKeys,
 }: BuildBarConfigArgs): TimeSeriesBarChartConfig & { yAxis?: YAxisConfig } {
     const barLayout = barLayoutForDisplay(visualizationType, chartSettings)
     const labelFormatter = buildSqlDateLabelFormatter(xData, timezone)
@@ -495,7 +511,7 @@ export function buildBarChartConfig({
         // Percent bars scale against a [0, 1] domain; trend lines plot raw series values, so they'd
         // render off-scale and invisible.
         trendLines: barLayout === 'percent' ? [] : buildTrendLineConfigs(ySeriesData),
-        legend: buildLegendConfig(chartSettings),
+        legend: buildLegendConfig(chartSettings, hiddenSeriesKeys),
         valueLabels: buildValueLabelsConfig(chartSettings, ySeriesData),
         tooltip: {
             ...buildSqlTooltipConfig(chartSettings, ySeriesData),
@@ -511,6 +527,7 @@ export function buildComboChartConfig({
     goalLines,
     visualizationType,
     ySeriesData,
+    hiddenSeriesKeys,
 }: BuildBarConfigArgs): TimeSeriesComboChartConfig & { yAxis?: YAxisConfig } {
     const labelFormatter = buildSqlDateLabelFormatter(xData, timezone)
 
@@ -547,7 +564,7 @@ export function buildComboChartConfig({
         // Percent bars scale against a [0, 1] domain; trend lines plot raw series values, so they'd
         // render off-scale and invisible.
         trendLines: isPercent ? [] : buildTrendLineConfigs(ySeriesData),
-        legend: buildLegendConfig(chartSettings),
+        legend: buildLegendConfig(chartSettings, hiddenSeriesKeys),
         valueLabels: buildValueLabelsConfig(chartSettings, ySeriesData),
         tooltip: {
             ...buildSqlTooltipConfig(chartSettings, ySeriesData),

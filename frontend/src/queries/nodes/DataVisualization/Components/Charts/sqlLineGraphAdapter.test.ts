@@ -1014,4 +1014,48 @@ describe('sqlLineGraphAdapter', () => {
             ])
         })
     })
+
+    describe('hiddenSeriesKeys → legend.hiddenKeys', () => {
+        const dateXData: AxisSeries<string> = {
+            column: { name: 'day', type: { name: 'DATE', isNumerical: false }, label: 'day', dataIndex: 0 },
+            data: ['2024-01-01', '2024-01-02'],
+        }
+
+        it('threads hidden keys into the line legend so quill excludes + rescales those series', () => {
+            const config = buildLineChartConfig({
+                xData: dateXData,
+                chartSettings: {},
+                timezone: 'UTC',
+                hiddenSeriesKeys: ['Events-0'],
+            })
+            // show stays false (no legend UI); hiddenKeys still hides + rescales.
+            expect(config.legend).toEqual({
+                show: false,
+                position: 'top',
+                interactive: true,
+                hiddenKeys: ['Events-0'],
+            })
+        })
+
+        it('threads hidden keys into the bar legend too (the spend chart is a stacked bar)', () => {
+            const config = buildBarChartConfig({
+                xData: dateXData,
+                chartSettings: {},
+                timezone: 'UTC',
+                visualizationType: ChartDisplayType.ActionsStackedBar,
+                hiddenSeriesKeys: ['confirmed_MRR-0'],
+            })
+            expect(config.legend).toMatchObject({ hiddenKeys: ['confirmed_MRR-0'] })
+        })
+
+        it('omits hiddenKeys when nothing is hidden, so a native legend keeps its uncontrolled toggling', () => {
+            const config = buildLineChartConfig({
+                xData: dateXData,
+                chartSettings: { showLegend: true },
+                timezone: 'UTC',
+                hiddenSeriesKeys: [],
+            })
+            expect(config.legend).not.toHaveProperty('hiddenKeys')
+        })
+    })
 })

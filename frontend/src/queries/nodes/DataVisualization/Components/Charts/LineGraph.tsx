@@ -50,10 +50,12 @@ import { SqlComboGraph } from './SqlComboGraph'
 import { SqlLineGraph } from './SqlLineGraph'
 import {
     AREA_FILL_OPACITY,
+    type SqlLineYSeries,
     canRenderSqlBarGraph,
     canRenderSqlComboGraph,
     capYSeriesData,
     exceedsMaxSeries,
+    getSeriesKey,
     isAreaSeries,
     warnTooManySeries,
 } from './sqlLineGraphAdapter'
@@ -145,6 +147,34 @@ export type LineGraphProps = {
     /** Called when the user clicks a data point. Receives the series key, x-axis index, and label.
      *  When provided, the SQL chart shows a "click to inspect" hint in the tooltip. */
     onPointClick?: (seriesKey: string, dataIndex: number, label: string) => void
+    /** Series keys (see {@link getSeriesKey}) the viewer has toggled off. Excluded from drawing and
+     *  scales so the remaining series rescale into the freed space; the quill path routes this to the
+     *  chart's controlled `hiddenKeys`, the legacy path drops the series (colors pinned first so the
+     *  rest keep their palette slot). Empty/undefined = no change for existing callers. */
+    hiddenSeriesKeys?: string[]
+}
+
+/** Legacy chart.js path: drop toggled-off series, but first pin each remaining series' resolved
+ *  color so removing a middle series doesn't shift the palette-by-index colors of the rest. (The
+ *  quill path keeps hidden series in place via controlled `hiddenKeys`, so it needs none of this.) */
+function applyLegacyHiddenSeries(
+    ySeriesData: SqlLineYSeries[] | null,
+    hiddenSeriesKeys: string[] | undefined
+): SqlLineYSeries[] | null {
+    if (!ySeriesData || !hiddenSeriesKeys?.length) {
+        return ySeriesData
+    }
+    const hidden = new Set(hiddenSeriesKeys)
+    return ySeriesData
+        .map((series, index) => ({ series, index }))
+        .filter(({ series, index }) => !hidden.has(getSeriesKey(series, index)))
+        .map(({ series, index }) => {
+            const display = {
+                ...series.settings?.display,
+                color: series.settings?.display?.color ?? getSeriesColor(index),
+            }
+            return { ...series, settings: { ...series.settings, display } } as SqlLineYSeries
+        })
 }
 
 const LegacyLineGraph = ({
@@ -156,6 +186,7 @@ const LegacyLineGraph = ({
     dashboardId,
     goalLines = [],
     className,
+    hiddenSeriesKeys,
 }: LineGraphProps): JSX.Element => {
     const { tooltipId, getTooltip, showTooltip, hideTooltip, positionTooltip, pinTooltip } = useInsightTooltip({
         isPinnable: true,
@@ -185,7 +216,10 @@ const LegacyLineGraph = ({
         }
     }, [yData, dashboardId])
 
-    const ySeriesData = useMemo(() => capYSeriesData(yData), [yData])
+    const ySeriesData = useMemo(
+        () => applyLegacyHiddenSeries(capYSeriesData(yData), hiddenSeriesKeys),
+        [yData, hiddenSeriesKeys]
+    )
 
     const datasets = useMemo(() => {
         if (!ySeriesData) {
