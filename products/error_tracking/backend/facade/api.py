@@ -19,6 +19,7 @@ from ..models import (
     autocapture_exceptions_enabled as autocapture_exceptions_enabled,
     override_error_tracking_issue_fingerprint as override_error_tracking_issue_fingerprint,
     resolve_fingerprints_for_issues,
+    sync_autocapture_opt_in as sync_autocapture_opt_in,
     sync_issues_to_clickhouse as sync_issues_to_clickhouse,
 )
 from ..remote_config import build_error_tracking_config as build_error_tracking_config
