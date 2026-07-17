@@ -12561,16 +12561,27 @@ export namespace Schemas {
       readonly updated_at: string | null;
     }
 
+    export interface BriefSectionCitation {
+      /** Cited resource type, e.g. insight or dashboard. */
+      type: string;
+      /** Stable id of the cited resource within its type. */
+      ref: string;
+      /** Human-readable name of the cited resource, for display. */
+      label: string;
+      /** Deep link into the app, or empty when the resource has no navigable target. */
+      url: string;
+    }
+
     export interface BriefSection {
-      /** Section kind, e.g. 'what_happened' or 'what_to_build_next'. */
+      /** Section kind, e.g. what_happened or what_to_build_next. */
       kind: string;
-      /** Short, specific section heading. */
+      /** Short section heading. */
       title: string;
-      /** Section body in markdown. */
+      /** Section body rendered as markdown. */
       markdown: string;
-      /** Citation ids (e.g. 'c1') backing the section, copied verbatim. */
-      citations: string[];
-      /** Confidence in this section, 0.0-1.0. */
+      /** PostHog resources this section cites as evidence. */
+      citations: BriefSectionCitation[];
+      /** Model confidence in this section, 0.0-1.0. */
       confidence: number;
     }
 
@@ -25866,6 +25877,8 @@ export namespace Schemas {
          * @nullable
          */
       row_filters?: ExternalDataSourceBulkUpdateSchemaRowFiltersItem[] | null;
+      /** When true and the schema has no sync method configured yet (and this update does not set one), discover the table on the source and fill in default sync settings: incremental sync with an auto-selected tracking column where supported, otherwise append, otherwise full refresh. Ignored for schemas that already have a sync method. */
+      apply_sync_defaults?: boolean;
     }
 
     export interface ExternalDataSourceConnectionOption {
@@ -64869,6 +64882,25 @@ export namespace Schemas {
     export interface _TracingDurationHistogramRequest {
       /** The duration-histogram query to execute. */
       query: _TracingDurationHistogramQueryBody;
+    }
+
+    export interface _TracingLatencyHeatmapCell {
+      /** ISO 8601 UTC start of the time bucket. */
+      time: string;
+      /** Lower edge of the 1-2-5 series duration bucket in nanoseconds (1ms, 2ms, 5ms, 10ms, ...). 0 on the sentinel row that enumerates a time bucket with no matching spans. */
+      bucket_ns: number;
+      /** Spans (or traces when rootSpans is true) in this cell. 0 only on sentinel rows. */
+      count: number;
+    }
+
+    export interface _TracingLatencyHeatmapRequest {
+      /** The latency-heatmap query to execute. */
+      query: _TracingDurationHistogramQueryBody;
+    }
+
+    export interface _TracingLatencyHeatmapResponse {
+      /** Sparse heatmap cells ordered by time then duration bucket. Every time bucket in the window appears in at least one row, so the full x axis can be derived from the response. */
+      results: _TracingLatencyHeatmapCell[];
     }
 
     /**

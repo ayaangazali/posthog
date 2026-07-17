@@ -278,9 +278,7 @@ export const FEATURE_FLAGS = {
     DASHBOARD_INLINE_TILE_INSERTION: 'dashboard-inline-tile-insertion', // owner: @MattPua #team-analytics-platform
     DASHBOARD_LAYOUT_DISCARD_PROMPT: 'dashboard-layout-discard-prompt', // owner: @cory.s #team-analytics-platform
     DASHBOARD_POSTHOG_AI_BUTTON_LABEL: 'dashboard-posthog-ai-button-label', // owner: @pauldambra #team-product-analytics multivariate=control,control_b,test
-    DASHBOARD_QUICK_FILTERS_EXPERIMENT: 'dashboard-quick-filters-experiment', // owner: @vdekrijger #team-product-analytics multivariate=control,test
     DASHBOARD_SUBSCRIBE_NUDGE: 'dashboard-subscribe-nudge', // owner: #team-analytics-platform multivariate=control,test, nudges repeat dashboard viewers with no subscription toward setting one up
-    DASHBOARD_SUBSCRIBE_PLACEMENT: 'dashboard-subscribe-placement', // owner: @MattPua #team-analytics-platform multivariate=control,button,menu
     DASHBOARD_TEMPLATE_CHOOSER_EXPERIMENT: 'dashboard-template-chooser-experiment', // owner: @mattp #team-analytics-platform multivariate=control,simple,new
     DASHBOARD_WIDGETS: 'dashboard-widgets', // owner: @mattp #team-analytics-platform
     DASHBOARDS_LIST_VIEW: 'dashboards-list-view', // owner: @vdekrijger #team-product-analytics multivariate=control,tree
@@ -330,10 +328,9 @@ export const FEATURE_FLAGS = {
     FIELD_NOTES: 'field-notes', // owner: @adamleith
     FLAG_EVALUATION_TAGS: 'flag-evaluation-tags', // owner: @dmarticus #team-feature-flags
     FLAGGED_FEATURE_INDICATOR: 'flagged-feature-indicator', // owner: @benjackwhite
-    FUNNEL_INSIGHT_ALERTS: 'funnel-insight-alerts', // owner: @vdekrijger, gates alerts on funnel insights (conversion rate)
     GROUP_PROFILE_EXPERIMENT: 'group-profile-experiment', // owner: @arthurdedeus #team-customer-analytics
     HEALTH_ASK_AI: 'health-ask-ai', // owner: @jordanm-posthog #team-web-analytics, gates the "Ask PostHog AI" buttons on the Health overview
-    HOGQL_INSIGHT_ALERTS: 'hogql-insight-alerts', // owner: @vdekrijger, gates alerts on SQL-backed (HogQL) insights
+    HOG_INVOCATION_RESULTS_RUNS_TAB: 'hog-invocation-results-runs-tab', // owner: #team-workflows
     HOGQL_WAREHOUSE_ACCESS_CONTROL: 'hogql-warehouse-access-control', // owner: @a-lider #team-platform-features, gates per-object access control for warehouse tables and views
     IDENTITY_MATCHING: 'identity-matching', // owner: @fercgomes #team-growth, gates new identity matching scene on marketing analytics
     INBOX_SLACK_NOTIFICATIONS: 'inbox-slack-notifications', // owner: #team-self-driving, gates the Slack notifications config card in the inbox
@@ -446,6 +443,7 @@ export const FEATURE_FLAGS = {
     PROJECT_SECRET_API_KEYS: 'project-secret-api-keys', // owner: #team-platform-features
     PROMOTED_EVENT_PROPERTIES_EDIT: 'promoted-event-properties-edit', // owner: @pauldambra #team-product-analytics, gates the primary-property picker on the event definition edit page (flag slug kept as `promoted-event-properties-edit` to avoid migrating teams that already toggled it on)
     PROPERTY_ACCESS_CONTROL: 'property-access-control', // owner: @reecejones #team-platform-features
+    PULSE: 'pulse', // owner: #team-analytics-platform
     QUICK_START_PULSE_INDICATOR: 'quick-start-pulse-indicator', // owner: @fercgomes #team-growth multivariate=control,test
     QUILL_CHART_STYLE_REFRESH: 'quill-chart-style-refresh', // owner: #team-product-analytics, gates refreshed quill chart styling (monotone curves, axis lines + tick marks, faint dashed grid, crosshair)
     QUILL_DATE_PICKER: 'quill-date-picker', // owner: @pauldambra, flips the lib/components/DatePicker seam from LemonUI to Quill
