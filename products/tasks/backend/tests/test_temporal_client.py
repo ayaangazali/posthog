@@ -1,6 +1,6 @@
 from unittest.mock import AsyncMock, Mock, patch
 
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from asgiref.sync import async_to_sync
 from parameterized import parameterized
@@ -16,7 +16,56 @@ from products.tasks.backend.temporal.client import (
     execute_task_processing_workflow_async,
     redispatch_orphaned_task_run,
     resume_task_in_cloud_workflow,
+    signal_task_followup_message,
 )
+from products.tasks.backend.temporal.constants import (
+    SEND_STEER_SIGNAL,
+    STEERING_PROTOCOL_QUERY,
+    STEERING_PROTOCOL_QUERY_TIMEOUT,
+)
+
+
+class TestSignalTaskFollowupMessage(SimpleTestCase):
+    @parameterized.expand(
+        [
+            (False, True, None, "send_followup_message"),
+            (True, False, 1, "send_followup_message"),
+            (True, True, 1, SEND_STEER_SIGNAL),
+            (True, True, RuntimeError("query not registered"), "send_followup_message"),
+            (True, True, TimeoutError("query timed out"), "send_followup_message"),
+        ]
+    )
+    def test_capability_gates_versioned_signal_without_changing_legacy_argument_count(
+        self,
+        steer: bool,
+        signals_enabled: bool,
+        query_result: int | Exception | None,
+        expected_signal: str,
+    ) -> None:
+        handle = Mock()
+        handle.signal = AsyncMock()
+        handle.query = AsyncMock()
+        if isinstance(query_result, Exception):
+            handle.query.side_effect = query_result
+        else:
+            handle.query.return_value = query_result
+        client = Mock()
+        client.get_workflow_handle.return_value = handle
+
+        with (
+            self.settings(TASKS_NATIVE_STEERING_SIGNALS_ENABLED=signals_enabled),
+            patch("products.tasks.backend.temporal.client.sync_connect", return_value=client),
+        ):
+            signal_task_followup_message("workflow-id", "hello", ["artifact-1"], steer=steer)
+
+        handle.signal.assert_awaited_once_with(expected_signal, args=["hello", ["artifact-1"]])
+        if steer and signals_enabled:
+            handle.query.assert_awaited_once_with(
+                STEERING_PROTOCOL_QUERY,
+                rpc_timeout=STEERING_PROTOCOL_QUERY_TIMEOUT,
+            )
+        else:
+            handle.query.assert_not_awaited()
 
 
 @override_settings(DEBUG=False)

@@ -7829,7 +7829,26 @@ class TestTaskRunCommandAPI(BaseTaskAPITest):
         self.assertEqual(data["jsonrpc"], "2.0")
         self.assertTrue(data["result"]["queued"])
 
-        mock_signal_followup.assert_called_once_with(run.workflow_id, "Hello agent", [])
+        mock_signal_followup.assert_called_once_with(run.workflow_id, "Hello agent", [], steer=False)
+
+    @patch("products.tasks.backend.temporal.client.signal_task_followup_message")
+    def test_command_signals_steer_intent(self, mock_signal_followup):
+        task = self.create_task()
+        run = self._create_run_with_sandbox(task)
+
+        response = self.client.post(
+            self._command_url(task, run),
+            {
+                "jsonrpc": "2.0",
+                "method": "user_message",
+                "params": {"content": "Change direction", "steer": True},
+                "id": "req-steer",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_signal_followup.assert_called_once_with(run.workflow_id, "Change direction", [], steer=True)
 
     @patch("products.tasks.backend.temporal.client.signal_task_followup_message")
     def test_command_user_message_requires_code_access(self, mock_signal_followup):
@@ -7865,7 +7884,7 @@ class TestTaskRunCommandAPI(BaseTaskAPITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.json()["result"]["queued"])
-        mock_signal_followup.assert_called_once_with(run.workflow_id, "Hello agent", [])
+        mock_signal_followup.assert_called_once_with(run.workflow_id, "Hello agent", [], steer=False)
 
     @patch("products.tasks.backend.temporal.client.signal_task_followup_message")
     def test_command_signals_user_message_artifact_ids(self, mock_signal_followup):
@@ -7897,7 +7916,7 @@ class TestTaskRunCommandAPI(BaseTaskAPITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.json()["result"]["queued"])
-        mock_signal_followup.assert_called_once_with(run.workflow_id, "See attached", ["artifact-123"])
+        mock_signal_followup.assert_called_once_with(run.workflow_id, "See attached", ["artifact-123"], steer=False)
 
     @patch("products.tasks.backend.temporal.client.signal_task_followup_message")
     def test_command_returns_502_when_user_message_signal_fails(self, mock_signal_followup):
