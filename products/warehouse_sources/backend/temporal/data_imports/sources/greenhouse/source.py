@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Optional, cast
 
 from posthog.schema import (
@@ -13,7 +14,11 @@ from products.warehouse_sources.backend.temporal.data_imports.pipelines.pipeline
     SourceInputs,
     SourceResponse,
 )
-from products.warehouse_sources.backend.temporal.data_imports.sources.common.base import FieldType, ResumableSource
+from products.warehouse_sources.backend.temporal.data_imports.sources.common.base import (
+    FieldType,
+    ResumableSource,
+    VersionDeprecation,
+)
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.canonical_descriptions import (
     CanonicalDescriptions,
 )
@@ -36,9 +41,11 @@ from products.warehouse_sources.backend.types import ExternalDataSourceType
 
 @SourceRegistry.register
 class GreenhouseSource(ResumableSource[GreenhouseSourceConfig, GreenhouseResumeConfig]):
-    supported_versions = ("v1",)
-    default_version = "v1"
+    supported_versions = ("v1", "v3")
+    default_version = "v3"
     api_docs_url = "https://developers.greenhouse.io/harvest.html"
+    # Harvest v1/v2 are deprecated; the vendor removes them on 2026-08-31 in favour of v3.
+    deprecated_versions = (VersionDeprecation(version="v1", sunset_at=date(2026, 8, 31)),)
 
     lists_tables_without_credentials = True  # static endpoint catalog — safe for public docs
 
@@ -112,12 +119,14 @@ Grant the key read (`GET`) access to the resources you want to sync — for exam
         # At source-create (`schema_name is None`) accept a 403 — the key may legitimately be
         # scoped only to the endpoints the user wants. For a per-schema check, probe that
         # endpoint and surface a missing-scope error.
+        # No source pin exists at create time, so validate against the version new sources start on.
+        api_version = self.default_version
         if schema_name is not None and schema_name in GREENHOUSE_ENDPOINTS:
             return validate_greenhouse_credentials(
-                config.api_key, path=GREENHOUSE_ENDPOINTS[schema_name].path, accept_forbidden=False
+                config.api_key, api_version, path=GREENHOUSE_ENDPOINTS[schema_name].path, accept_forbidden=False
             )
 
-        return validate_greenhouse_credentials(config.api_key, accept_forbidden=True)
+        return validate_greenhouse_credentials(config.api_key, api_version, accept_forbidden=True)
 
     def get_non_retryable_errors(self) -> dict[str, str | None]:
         return {
@@ -137,6 +146,7 @@ Grant the key read (`GET`) access to the resources you want to sync — for exam
         return greenhouse_source(
             api_key=config.api_key,
             endpoint=inputs.schema_name,
+            api_version=self.resolve_api_version(inputs.api_version),
             logger=inputs.logger,
             resumable_source_manager=resumable_source_manager,
             should_use_incremental_field=inputs.should_use_incremental_field,

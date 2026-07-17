@@ -1,8 +1,11 @@
+from datetime import date
+
 import pytest
 from unittest import mock
 
 from posthog.schema import SourceFieldInputConfig, SourceFieldInputConfigType
 
+from products.warehouse_sources.backend.temporal.data_imports.sources.common.base import VersionDeprecation
 from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs import GreenhouseSourceConfig
 from products.warehouse_sources.backend.temporal.data_imports.sources.greenhouse.greenhouse import (
     GreenhouseResumeConfig,
@@ -117,7 +120,7 @@ class TestGreenhouseSource:
 
         assert is_valid is True
         assert error is None
-        mock_validate.assert_called_once_with("test_api_key", accept_forbidden=True)
+        mock_validate.assert_called_once_with("test_api_key", "v3", accept_forbidden=True)
 
     @mock.patch(
         "products.warehouse_sources.backend.temporal.data_imports.sources.greenhouse.source.validate_greenhouse_credentials"
@@ -127,11 +130,36 @@ class TestGreenhouseSource:
 
         self.source.validate_credentials(self.config, self.team_id, schema_name="candidates")
 
-        mock_validate.assert_called_once_with("test_api_key", path="/candidates", accept_forbidden=False)
+        mock_validate.assert_called_once_with("test_api_key", "v3", path="/candidates", accept_forbidden=False)
 
     def test_get_resumable_source_manager_binds_resume_config(self) -> None:
         manager = self.source.get_resumable_source_manager(mock.MagicMock())
         assert manager._data_class is GreenhouseResumeConfig
+
+    def test_v3_is_default_and_v1_is_deprecated_with_sunset(self) -> None:
+        assert self.source.supported_versions == ("v1", "v3")
+        assert self.source.default_version == "v3"
+        assert self.source.deprecated_versions == (VersionDeprecation(version="v1", sunset_at=date(2026, 8, 31)),)
+
+    @pytest.mark.parametrize(
+        "pinned, expected",
+        [
+            ("v1", "v1"),  # a source pinned to the deprecated version keeps hitting it
+            ("v3", "v3"),
+            (None, "v3"),  # unpinned falls back to the new default
+        ],
+    )
+    @mock.patch("products.warehouse_sources.backend.temporal.data_imports.sources.greenhouse.source.greenhouse_source")
+    def test_source_for_pipeline_resolves_and_passes_api_version(
+        self, mock_greenhouse_source: mock.MagicMock, pinned: str | None, expected: str
+    ) -> None:
+        inputs = mock.MagicMock()
+        inputs.schema_name = "candidates"
+        inputs.api_version = pinned
+
+        self.source.source_for_pipeline(self.config, mock.MagicMock(), inputs)
+
+        assert mock_greenhouse_source.call_args.kwargs["api_version"] == expected
 
     @mock.patch("products.warehouse_sources.backend.temporal.data_imports.sources.greenhouse.source.greenhouse_source")
     def test_source_for_pipeline_passes_incremental_inputs(self, mock_greenhouse_source: mock.MagicMock) -> None:

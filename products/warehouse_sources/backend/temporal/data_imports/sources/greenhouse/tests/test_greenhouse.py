@@ -103,7 +103,7 @@ class TestValidateCredentials:
         mock_session = mock_session_factory.return_value
         mock_session.get.return_value = _make_response({}, status_code=status_code)
 
-        is_valid, error = validate_credentials("test_key", accept_forbidden=accept_forbidden)
+        is_valid, error = validate_credentials("test_key", "v3", accept_forbidden=accept_forbidden)
 
         assert is_valid is expected_valid
         assert (error is None) is expected_valid
@@ -113,20 +113,32 @@ class TestValidateCredentials:
     )
     def test_network_error_is_not_valid(self, mock_session_factory: MagicMock) -> None:
         mock_session_factory.return_value.get.side_effect = Exception("boom")
-        is_valid, error = validate_credentials("test_key")
+        is_valid, error = validate_credentials("test_key", "v3")
         assert is_valid is False
         assert error == "boom"
+
+    @pytest.mark.parametrize("api_version", ["v1", "v3"])
+    @patch(
+        "products.warehouse_sources.backend.temporal.data_imports.sources.greenhouse.greenhouse.make_tracked_session"
+    )
+    def test_probe_url_carries_api_version(self, mock_session_factory: MagicMock, api_version: str) -> None:
+        mock_session = mock_session_factory.return_value
+        mock_session.get.return_value = _make_response({}, status_code=200)
+
+        validate_credentials("test_key", api_version)
+
+        assert mock_session.get.call_args.args[0] == f"https://harvest.greenhouse.io/{api_version}/candidates"
 
 
 class TestGreenhouseSourceResponse:
     @pytest.mark.parametrize("endpoint", list(ENDPOINTS))
     def test_primary_keys_match_settings(self, endpoint: str) -> None:
-        response = greenhouse_source("key", endpoint, MagicMock(), MagicMock())
+        response = greenhouse_source("key", endpoint, "v3", MagicMock(), MagicMock())
         assert response.primary_keys == GREENHOUSE_ENDPOINTS[endpoint].primary_keys
 
     @pytest.mark.parametrize("endpoint", list(ENDPOINTS))
     def test_partitioning_only_when_partition_key_present(self, endpoint: str) -> None:
-        response = greenhouse_source("key", endpoint, MagicMock(), MagicMock())
+        response = greenhouse_source("key", endpoint, "v3", MagicMock(), MagicMock())
         partition_key = GREENHOUSE_ENDPOINTS[endpoint].partition_key
 
         if partition_key:
@@ -141,14 +153,14 @@ class TestGreenhouseSourceResponse:
         assert GREENHOUSE_ENDPOINTS[endpoint].partition_key not in ("updated_at", "last_activity_at")
 
     def test_sort_mode_is_ascending(self) -> None:
-        assert greenhouse_source("key", "candidates", MagicMock(), MagicMock()).sort_mode == "asc"
+        assert greenhouse_source("key", "candidates", "v3", MagicMock(), MagicMock()).sort_mode == "asc"
 
 
 class TestGreenhousePaginationAndResume:
     """Drive ``get_rows`` (via ``greenhouse_source``) with a mocked HTTP session."""
 
     def _drive(
-        self, endpoint: str, manager: MagicMock, responses: list[Response]
+        self, endpoint: str, manager: MagicMock, responses: list[Response], api_version: str = "v1"
     ) -> tuple[list[tuple[str, dict[str, Any] | None]], list[Any]]:
         """Returns (per-request (url, params) tuples, batches yielded by the source)."""
         sent: list[tuple[str, dict[str, Any] | None]] = []
@@ -164,10 +176,19 @@ class TestGreenhousePaginationAndResume:
         ) as mock_factory:
             mock_factory.return_value.get.side_effect = fake_get
 
-            response = greenhouse_source("key", endpoint, MagicMock(), manager)
+            response = greenhouse_source("key", endpoint, api_version, MagicMock(), manager)
             yielded.extend(cast(Iterable[Any], response.items()))
 
         return sent, yielded
+
+    @pytest.mark.parametrize("api_version", ["v1", "v3"])
+    def test_first_request_url_carries_api_version(self, api_version: str) -> None:
+        manager = MagicMock()
+        manager.can_resume.return_value = False
+
+        sent, _ = self._drive("candidates", manager, [_make_response([{"id": 1}])], api_version=api_version)
+
+        assert sent[0][0] == f"https://harvest.greenhouse.io/{api_version}/candidates"
 
     def test_fresh_run_follows_link_header(self) -> None:
         manager = MagicMock()

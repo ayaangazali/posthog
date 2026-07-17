@@ -15,7 +15,7 @@ from products.warehouse_sources.backend.temporal.data_imports.sources.greenhouse
     GreenhouseEndpointConfig,
 )
 
-GREENHOUSE_BASE_URL = "https://harvest.greenhouse.io/v1"
+GREENHOUSE_BASE_HOST = "https://harvest.greenhouse.io"
 REQUEST_TIMEOUT_SECONDS = 60
 # Harvest's documented maximum page size. Fewer requests keeps us comfortably under the
 # per-10-second rate limit advertised via the `X-RateLimit-*` response headers.
@@ -34,6 +34,12 @@ class GreenhouseResumeConfig:
     next_url: str
 
 
+def _base_url(api_version: str) -> str:
+    # Harvest embeds the API version as the first path segment (e.g. `/v1/candidates`,
+    # `/v3/candidates`); the resolved source pin selects it.
+    return f"{GREENHOUSE_BASE_HOST}/{api_version}"
+
+
 def _auth(api_key: str) -> tuple[str, str]:
     # Harvest uses HTTP Basic auth with the API key as the username and a blank password.
     return (api_key, "")
@@ -50,7 +56,7 @@ def _format_datetime(value: Any) -> str:
 
 
 def validate_credentials(
-    api_key: str, path: str = "/candidates", accept_forbidden: bool = True
+    api_key: str, api_version: str, path: str = "/candidates", accept_forbidden: bool = True
 ) -> tuple[bool, str | None]:
     """Probe a Harvest endpoint to confirm the API key is genuine.
 
@@ -59,7 +65,7 @@ def validate_credentials(
     can connect with keys scoped only to the endpoints they want; per-schema checks pass
     ``accept_forbidden=False`` to surface a missing-scope error for that specific endpoint.
     """
-    url = f"{GREENHOUSE_BASE_URL}{path}"
+    url = f"{_base_url(api_version)}{path}"
     session = make_tracked_session()
     try:
         response = session.get(url, auth=_auth(api_key), params={"per_page": 1}, timeout=10)
@@ -102,6 +108,7 @@ def _build_initial_params(
 def get_rows(
     api_key: str,
     endpoint: str,
+    api_version: str,
     logger: FilteringBoundLogger,
     resumable_source_manager: ResumableSourceManager[GreenhouseResumeConfig],
     should_use_incremental_field: bool = False,
@@ -109,6 +116,7 @@ def get_rows(
     incremental_field: str | None = None,
 ) -> Iterator[Any]:
     config = GREENHOUSE_ENDPOINTS[endpoint]
+    base_url = _base_url(api_version)
     session = make_tracked_session()
 
     base_params = _build_initial_params(
@@ -147,7 +155,7 @@ def get_rows(
                 # duplicate the query string, so we follow it verbatim.
                 response = fetch_page(next_url, None)
             else:
-                response = fetch_page(f"{GREENHOUSE_BASE_URL}{config.path}", base_params)
+                response = fetch_page(f"{base_url}{config.path}", base_params)
 
             items = response.json()
             if items:
@@ -167,6 +175,7 @@ def get_rows(
 def greenhouse_source(
     api_key: str,
     endpoint: str,
+    api_version: str,
     logger: FilteringBoundLogger,
     resumable_source_manager: ResumableSourceManager[GreenhouseResumeConfig],
     should_use_incremental_field: bool = False,
@@ -180,6 +189,7 @@ def greenhouse_source(
         items=lambda: get_rows(
             api_key=api_key,
             endpoint=endpoint,
+            api_version=api_version,
             logger=logger,
             resumable_source_manager=resumable_source_manager,
             should_use_incremental_field=should_use_incremental_field,
