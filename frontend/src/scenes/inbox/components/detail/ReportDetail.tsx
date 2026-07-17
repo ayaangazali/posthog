@@ -87,18 +87,14 @@ const FINDINGS_TOOLTIP =
     'Findings are the individual pieces of evidence – signals from your connected sources and scouts – that were grouped into this report.'
 
 /**
- * Single meta line under the title: status/actionability chips, then dot-separated stats
- * (finding count · updated · source stack). `evidenceCount` switches to the live signal count once
- * findings load, so the row reads the same before and after the query resolves.
+ * Single meta line under the title: status/actionability chips.
  */
 function ReportDetailMeta({
     report,
-    evidenceCount,
     actionabilityExplanation,
     scoutSkillName,
 }: {
     report: SignalReport
-    evidenceCount: number
     actionabilityExplanation?: string | null
     /** Authoring scout's raw skill slug, when scout-authored — its name links to the scout off the "Scout" chip. */
     scoutSkillName?: string | null
@@ -108,16 +104,6 @@ function ReportDetailMeta({
     const showStatus = report.status !== 'ready' || !report.actionability
 
     const stats: ReactNode[] = []
-    if (evidenceCount > 0) {
-        stats.push(
-            <Tooltip title={FINDINGS_TOOLTIP}>
-                <span className="tabular-nums cursor-help">
-                    {evidenceCount} finding{evidenceCount === 1 ? '' : 's'}
-                </span>
-            </Tooltip>
-        )
-    }
-    // Mirrors error tracking's "First seen" / "Last seen": surface both lifecycle moments as distinct facts.
     stats.push(
         <span className="flex items-center gap-1">
             <span>First seen</span>
@@ -419,15 +405,12 @@ export function InboxDetailFrame({
                             </h1>
                             <ReportDetailMeta
                                 report={report}
-                                evidenceCount={evidenceCount}
                                 actionabilityExplanation={actionabilityExplanation}
                                 scoutSkillName={report.scout_name}
                             />
                         </div>
                     </div>
                     <div className="flex items-center gap-2 @2xl:shrink-0">
-                        {/* Compact icon links at the very left: open the PR on GitHub, then copy the report link. */}
-                        {openInGithub}
                         <LemonButton
                             type="tertiary"
                             size="small"
@@ -436,6 +419,7 @@ export function InboxDetailFrame({
                             aria-label="Copy link"
                             onClick={() => void copyToClipboard(reportUrl, 'report link')}
                         />
+                        {openInGithub}
                         {/* Discuss is always available and stays inline as its own dropdown button. */}
                         <DiscussReportButton report={report} reportUrl={reportUrl} />
                         {/* Buttons inline on wide layouts; collapse into a standard LemonMenu kebab below @4xl. */}
