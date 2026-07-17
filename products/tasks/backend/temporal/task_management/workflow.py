@@ -20,6 +20,9 @@ from products.tasks.backend.temporal.constants import (
     HEARTBEAT_DEBOUNCE,
     MAX_ACK_RETRIES,
     MAX_CI_REPETITIONS,
+    SEND_STEER_SIGNAL,
+    STEERING_PROTOCOL_QUERY,
+    STEERING_PROTOCOL_VERSION,
 )
 from products.tasks.backend.temporal.execute_sandbox.workflow import (
     COMPLETE_TASK_SIGNAL,
@@ -68,6 +71,15 @@ from products.tasks.backend.temporal.task_management.activities.pending_followup
     read_pending_followups,
 )
 
+_PATCH_ID_CAPABILITY_GATED_STEERING = "tasks-capability-gated-steering-signal"
+_PATCH_ID_ACK_BEFORE_COMPLETION = "tasks-task-management-ack-before-completion"
+
+
+def _ack_before_completion() -> bool:
+    if not workflow.in_workflow():
+        return True
+    return workflow.patched(_PATCH_ID_ACK_BEFORE_COMPLETION)
+
 
 @dataclass
 class TaskRunManagementInput:
@@ -93,6 +105,8 @@ class PendingExternalFollowup:
     message: str | None
     artifact_ids: list[str]
     source: str = FOLLOWUP_SOURCE_USER  # FOLLOWUP_SOURCE_USER | FOLLOWUP_SOURCE_CI
+    steer: bool = False
+    sequence: int = 0
 
 
 @dataclass
@@ -133,6 +147,7 @@ class PendingAckSlot:
     detail: Optional[str] = None
     signal_args: Optional[list[Any]] = None
     retry_count: int = 0
+    sequence: int = 0
 
 
 class TaskEvent(StrEnum):
@@ -180,6 +195,7 @@ class TaskManagementWorkflow(PostHogWorkflow):
         # External signals (from API, Slack, runner) queued for delivery to
         # the sandbox workflow. We assign ack_ids when we forward.
         self._pending_external_followups: list[PendingExternalFollowup] = []
+        self._next_followup_sequence: int = 0
         self._pending_external_complete: Optional[tuple[str, Optional[str]]] = None
         # Last payload we wrote to TaskRun.state, so `_persist_pending_followups`
         # can skip the DB roundtrip when nothing changed (e.g., draining an
@@ -191,11 +207,13 @@ class TaskManagementWorkflow(PostHogWorkflow):
         self._child_acks: list[ChildAck] = []
         self._pending_ack_slots: dict[str, PendingAckSlot] = {}
         self._child_completion: Optional[ChildCompletion] = None
+        self._ack_before_completion: bool = True
         # True between a successful `_ensure_sandbox_workflow_started` and
         # the next `PARENT_COMPLETED_SIGNAL`. The orchestrator lives for the
         # whole task run and spawns sandboxes lazily: when a follow-up arrives
         # while `_sandbox_alive=False`, we re-bootstrap before forwarding.
         self._sandbox_alive: bool = False
+        self._child_steering_protocol_version: int = 0
 
         # Activity tracking for CI follow-up timing. `_last_active_time` is
         # set when the sandbox workflow forwards a heartbeat with
@@ -243,10 +261,30 @@ class TaskManagementWorkflow(PostHogWorkflow):
         self._pending_external_complete = (status, error_message)
 
     @workflow.signal
-    async def send_followup_message(self, message: str | None = None, artifact_ids: Optional[list[str]] = None) -> None:
+    async def send_followup_message(
+        self, message: str | None = None, artifact_ids: Optional[list[str]] = None, steer: bool = False
+    ) -> None:
+        self._queue_external_followup(message, artifact_ids, steer=steer)
+
+    @workflow.signal(name=SEND_STEER_SIGNAL)
+    async def send_steer_message(self, message: str | None = None, artifact_ids: Optional[list[str]] = None) -> None:
+        self._queue_external_followup(message, artifact_ids, steer=True)
+
+    @workflow.query(name=STEERING_PROTOCOL_QUERY)
+    def steering_protocol_version(self) -> int:
+        return STEERING_PROTOCOL_VERSION
+
+    def _queue_external_followup(self, message: str | None, artifact_ids: Optional[list[str]], *, steer: bool) -> None:
         self._pending_external_followups.append(
-            PendingExternalFollowup(message=message, artifact_ids=artifact_ids or [], source=FOLLOWUP_SOURCE_USER)
+            PendingExternalFollowup(
+                message=message,
+                artifact_ids=artifact_ids or [],
+                source=FOLLOWUP_SOURCE_USER,
+                steer=steer,
+                sequence=self._next_followup_sequence,
+            )
         )
+        self._next_followup_sequence += 1
 
     @workflow.signal
     async def heartbeat(self, agent_active: bool = False) -> None:
@@ -330,6 +368,7 @@ class TaskManagementWorkflow(PostHogWorkflow):
         self._slack_thread_context = input.slack_thread_context
         self._posthog_mcp_scopes = input.posthog_mcp_scopes
         self._sandbox_workflow_id = f"{workflow.info().workflow_id}-sandbox"
+        self._ack_before_completion = _ack_before_completion()
 
         try:
             self._context = await self._get_task_processing_context()
@@ -425,11 +464,10 @@ class TaskManagementWorkflow(PostHogWorkflow):
                 or self._child_completion is not None
             )
         )
-        # Session-completion wins outright — short-circuits any pending work
-        # because the current sandbox session is ending. The orchestrator
-        # itself keeps running; the next follow-up will re-bootstrap a
-        # fresh sandbox.
-        if self._child_completion is not None:
+        # Older histories processed completion first. New executions drain
+        # ACKs before resetting the sandbox session so an already-delivered
+        # follow-up is not re-queued onto the replacement sandbox.
+        if self._child_completion is not None and (not self._ack_before_completion or not self._child_acks):
             return TaskEvent.CHILD_COMPLETED
         # Prefer external signals when both classes are pending — the child
         # signal drain is cheap and rarely time-critical.
@@ -525,6 +563,8 @@ class TaskManagementWorkflow(PostHogWorkflow):
                 message=followup.message,
                 artifact_ids=followup.artifact_ids,
                 source=followup.source,
+                steer=followup.steer,
+                sequence=followup.sequence,
             )
         # The persisted queue is the orchestrator's recovery buffer — keep
         # it in sync after every drain so a restart sees an accurate picture
@@ -540,7 +580,7 @@ class TaskManagementWorkflow(PostHogWorkflow):
         # ACKs match pending signal slots by ack_id. We log unmatched ACKs at
         # debug — they happen if a slot was already cleared by a timeout, but
         # the work was still done by the child.
-        any_requeued = False
+        requeued_followups: list[PendingExternalFollowup] = []
         while self._child_acks:
             ack = self._child_acks.pop(0)
             slot = self._pending_ack_slots.pop(ack.ack_id, None)
@@ -557,8 +597,9 @@ class TaskManagementWorkflow(PostHogWorkflow):
                 # Re-queue follow-ups so the next sandbox session picks them
                 # up. complete_task rejections are fine to drop — the child
                 # is shutting down precisely because it's already completing.
-                if self._handle_shutdown_rejection(slot):
-                    any_requeued = True
+                followup = self._followup_from_shutdown_rejection(slot)
+                if followup is not None:
+                    requeued_followups.append(followup)
                 continue
             workflow.logger.info(
                 "task_management_ack_received",
@@ -570,32 +611,40 @@ class TaskManagementWorkflow(PostHogWorkflow):
                 detail=ack.detail,
             )
         self._heartbeat_received = False
-        if any_requeued:
+        for followup in requeued_followups:
+            self._insert_external_followup_in_arrival_order(followup)
+        if requeued_followups:
             # Sync the recovery buffer to reflect the re-queue; otherwise an
             # orchestrator restart would forget about the rejected follow-up.
             await self._persist_pending_followups()
 
-    def _handle_shutdown_rejection(self, slot: PendingAckSlot) -> bool:
-        """Re-queue rejected follow-up work. Returns True if anything was re-queued."""
-        if slot.signal_name == SEND_FOLLOWUP_SIGNAL and slot.signal_args is not None:
-            # signal_args = [ack_id, message, artifact_ids, source]
-            _ack_id, message, artifact_ids, source = slot.signal_args
-            self._pending_external_followups.insert(
-                0,
-                PendingExternalFollowup(message=message, artifact_ids=artifact_ids, source=source),
-            )
+    def _followup_from_shutdown_rejection(self, slot: PendingAckSlot) -> PendingExternalFollowup | None:
+        if slot.signal_name in {SEND_FOLLOWUP_SIGNAL, SEND_STEER_SIGNAL} and slot.signal_args is not None:
+            _ack_id, message, artifact_ids, source, *_legacy = slot.signal_args
             workflow.logger.warning(
                 "task_management_followup_requeued_after_shutdown",
                 run_id=self._run_id,
                 source=source,
             )
-            return True
+            return PendingExternalFollowup(
+                message=message,
+                artifact_ids=artifact_ids,
+                source=source,
+                sequence=slot.sequence,
+            )
         workflow.logger.info(
             "task_management_shutdown_rejection_ignored",
             run_id=self._run_id,
             signal_name=slot.signal_name,
         )
-        return False
+        return None
+
+    def _insert_external_followup_in_arrival_order(self, followup: PendingExternalFollowup) -> None:
+        for index, pending in enumerate(self._pending_external_followups):
+            if pending.sequence > followup.sequence:
+                self._pending_external_followups.insert(index, followup)
+                return
+        self._pending_external_followups.append(followup)
 
     # ------------------------------------------------------------------
     # Sandbox session lifecycle (multiple sessions per orchestrator)
@@ -627,10 +676,15 @@ class TaskManagementWorkflow(PostHogWorkflow):
         # than silently dropping user input.
         requeued = 0
         for slot in list(self._pending_ack_slots.values()):
-            if slot.signal_name == SEND_FOLLOWUP_SIGNAL and slot.signal_args is not None:
-                _ack_id, message, artifact_ids, source = slot.signal_args
-                self._pending_external_followups.append(
-                    PendingExternalFollowup(message=message, artifact_ids=artifact_ids, source=source)
+            if slot.signal_name in {SEND_FOLLOWUP_SIGNAL, SEND_STEER_SIGNAL} and slot.signal_args is not None:
+                _ack_id, message, artifact_ids, source, *_legacy = slot.signal_args
+                self._insert_external_followup_in_arrival_order(
+                    PendingExternalFollowup(
+                        message=message,
+                        artifact_ids=artifact_ids,
+                        source=source,
+                        sequence=slot.sequence,
+                    )
                 )
                 requeued += 1
         if requeued:
@@ -646,6 +700,7 @@ class TaskManagementWorkflow(PostHogWorkflow):
         self._pending_ack_slots.clear()
         self._child_completion = None
         self._sandbox_alive = False
+        self._child_steering_protocol_version = 0
         self._ci_repetitions = 0
         self._pr_fingerprint = None
         self._pr_unresolved_threads = 0
@@ -675,11 +730,17 @@ class TaskManagementWorkflow(PostHogWorkflow):
         if not result.followups:
             return
         for item in result.followups:
+            sequence = item.get("sequence")
+            if not isinstance(sequence, int):
+                sequence = self._next_followup_sequence
+            self._next_followup_sequence = max(self._next_followup_sequence, sequence + 1)
             self._pending_external_followups.append(
                 PendingExternalFollowup(
                     message=item.get("message"),
                     artifact_ids=list(item.get("artifact_ids") or []),
                     source=item.get("source", FOLLOWUP_SOURCE_USER),
+                    steer=item.get("steer") is True,
+                    sequence=sequence,
                 )
             )
         # Seed the persistence snapshot so the next `_persist_pending_followups`
@@ -740,7 +801,7 @@ class TaskManagementWorkflow(PostHogWorkflow):
             signal_name=PARENT_ATTACHED_SIGNAL,
             sent_at=workflow.now(),
         )
-        await workflow.execute_activity(
+        protocol_version = await workflow.execute_activity(
             ensure_execute_sandbox_started,
             EnsureExecuteSandboxStartedInput(
                 workflow_id=self._sandbox_workflow_id,
@@ -756,6 +817,7 @@ class TaskManagementWorkflow(PostHogWorkflow):
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
+        self._child_steering_protocol_version = protocol_version if isinstance(protocol_version, int) else 0
         # Activity success means Signal-With-Start landed — either delivered
         # to an already-running execution or kicked off a fresh one. Either
         # way, a sandbox session is now in-flight.
@@ -770,6 +832,8 @@ class TaskManagementWorkflow(PostHogWorkflow):
         message: str | None,
         artifact_ids: list[str],
         source: str = FOLLOWUP_SOURCE_USER,
+        steer: bool = False,
+        sequence: int | None = None,
     ) -> None:
         if self._sandbox_workflow_id is None:
             workflow.logger.warning(
@@ -779,18 +843,27 @@ class TaskManagementWorkflow(PostHogWorkflow):
             )
             return
         ack_id = self._new_ack_id()
+        if sequence is None:
+            sequence = self._next_followup_sequence
+            self._next_followup_sequence += 1
         signal_args: list[Any] = [ack_id, message, artifact_ids, source]
+        supports_steering = self._child_steering_protocol_version >= STEERING_PROTOCOL_VERSION
+        if steer and workflow.patched(_PATCH_ID_CAPABILITY_GATED_STEERING):
+            signal_name = SEND_STEER_SIGNAL if supports_steering else SEND_FOLLOWUP_SIGNAL
+        else:
+            signal_name = SEND_STEER_SIGNAL if steer else SEND_FOLLOWUP_SIGNAL
         # Register the slot *before* sending so an in-flight send-failure
         # leaves the slot intact for the retry loop to re-attempt. The child
         # dedupes by ack_id so re-sending is safe.
         self._pending_ack_slots[ack_id] = PendingAckSlot(
-            signal_name=SEND_FOLLOWUP_SIGNAL,
+            signal_name=signal_name,
             sent_at=workflow.now(),
             detail=f"source={source}",
             signal_args=signal_args,
+            sequence=sequence,
         )
         try:
-            await self._sandbox_handle().signal(SEND_FOLLOWUP_SIGNAL, args=signal_args)
+            await self._sandbox_handle().signal(signal_name, args=signal_args)
         except Exception as e:
             # Keep the slot — `_retry_stale_acks` will try again after
             # ACK_TIMEOUT. This is the "child is dead, parent retries"

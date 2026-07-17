@@ -9,6 +9,8 @@ from products.tasks.backend.temporal.constants import (
     HEARTBEAT_DEBOUNCE,
     MAX_ACK_RETRIES,
     MAX_CI_REPETITIONS,
+    SEND_STEER_SIGNAL,
+    STEERING_PROTOCOL_VERSION,
 )
 from products.tasks.backend.temporal.execute_sandbox.workflow import PARENT_ATTACHED_SIGNAL, ChildCompletionPayload
 from products.tasks.backend.temporal.process_task.activities.get_pr_context import GetPrContextOutput, get_pr_context
@@ -20,6 +22,7 @@ from products.tasks.backend.temporal.task_management.workflow import (
     CIFollowUpDecision,
     PendingAckSlot,
     PendingExternalFollowup,
+    TaskEvent,
     TaskManagementWorkflow,
     TaskRunManagementInput,
 )
@@ -110,6 +113,17 @@ class TestExternalSignalHandlers:
         await workflow.send_followup_message("hello")
         assert workflow._pending_external_followups == [
             PendingExternalFollowup(message="hello", artifact_ids=[], source="user")
+        ]
+
+    async def test_send_steer_message_preserves_steer_intent(self):
+        workflow = TaskManagementWorkflow()
+
+        await workflow.send_steer_message("hello", ["a1"])
+        await workflow.send_followup_message("legacy", ["a2"], True)
+
+        assert workflow._pending_external_followups == [
+            PendingExternalFollowup(message="hello", artifact_ids=["a1"], source="user", steer=True),
+            PendingExternalFollowup(message="legacy", artifact_ids=["a2"], source="user", steer=True, sequence=1),
         ]
 
     async def test_external_heartbeat_records_activity(self, fixed_now):
@@ -606,6 +620,47 @@ class TestSignalChildFollowup:
         # can replay them — the child dedupes on ack_id so a replay is safe.
         assert slot.signal_args == ["ack-generated", "m", ["a"], "ci"]
 
+    @pytest.mark.parametrize(
+        ("patch_enabled", "protocol_version", "expected_signal"),
+        [
+            (True, STEERING_PROTOCOL_VERSION, SEND_STEER_SIGNAL),
+            (True, 0, "send_followup_message"),
+            (False, 0, SEND_STEER_SIGNAL),
+        ],
+    )
+    async def test_steer_signal_is_capability_gated_without_breaking_replay(
+        self,
+        monkeypatch,
+        fixed_now,
+        patch_enabled: bool,
+        protocol_version: int,
+        expected_signal: str,
+    ):
+        workflow = TaskManagementWorkflow()
+        workflow._run_id = "run-id"
+        workflow._sandbox_workflow_id = "sandbox-wf"
+        workflow._child_steering_protocol_version = protocol_version
+
+        handle = Mock()
+        handle.signal = AsyncMock()
+        monkeypatch.setattr(
+            task_management_workflow_module.workflow,
+            "get_external_workflow_handle",
+            Mock(return_value=handle),
+        )
+        monkeypatch.setattr(task_management_workflow_module.workflow, "uuid4", lambda: "ack-steer")
+        monkeypatch.setattr(task_management_workflow_module.workflow, "patched", lambda _patch_id: patch_enabled)
+
+        await workflow._signal_child_followup(message="m", artifact_ids=["a"], source="user", steer=True)
+
+        handle.signal.assert_awaited_once_with(
+            expected_signal,
+            args=["ack-steer", "m", ["a"], "user"],
+        )
+        slot = workflow._pending_ack_slots["ack-steer"]
+        assert slot.signal_name == expected_signal
+        assert slot.signal_args == ["ack-steer", "m", ["a"], "user"]
+
     async def test_skips_when_no_sandbox_id(self, monkeypatch, silent_workflow_logger):
         # If the sandbox workflow id was never set we have nowhere to deliver
         # to. Logging is the only side-effect.
@@ -927,6 +982,52 @@ class TestShutdownRejectionHandling:
         ]
         silent_workflow_logger.warning.assert_called()
 
+    async def test_steer_rejections_preserve_arrival_order_as_normal_followups(self, fixed_now, silent_workflow_logger):
+        workflow = TaskManagementWorkflow()
+        workflow._run_id = "run-id"
+        workflow._pending_ack_slots["ack-steer-1"] = PendingAckSlot(
+            signal_name=SEND_STEER_SIGNAL,
+            sent_at=fixed_now.now,
+            signal_args=["ack-steer-1", "first instruction", [], "user"],
+            sequence=0,
+        )
+        workflow._pending_ack_slots["ack-steer-2"] = PendingAckSlot(
+            signal_name=SEND_STEER_SIGNAL,
+            sent_at=fixed_now.now,
+            signal_args=["ack-steer-2", "second instruction", [], "user"],
+            sequence=1,
+        )
+        workflow._child_acks.append(
+            ChildAck(
+                signal_name=SEND_STEER_SIGNAL,
+                ack_id="ack-steer-1",
+                accepted=False,
+                detail="child_shutting_down",
+                received_at=fixed_now.now,
+            )
+        )
+
+        await workflow._drain_child_signals()
+        workflow._child_acks.append(
+            ChildAck(
+                signal_name=SEND_STEER_SIGNAL,
+                ack_id="ack-steer-2",
+                accepted=False,
+                detail="child_shutting_down",
+                received_at=fixed_now.now,
+            )
+        )
+        await workflow._drain_child_signals()
+
+        assert workflow._pending_external_followups == [
+            PendingExternalFollowup(
+                message="first instruction", artifact_ids=[], source="user", steer=False, sequence=0
+            ),
+            PendingExternalFollowup(
+                message="second instruction", artifact_ids=[], source="user", steer=False, sequence=1
+            ),
+        ]
+
     async def test_complete_task_rejection_is_dropped_silently(self, fixed_now, silent_workflow_logger):
         # If the child rejects a `complete_task` because it's shutting down,
         # that means it's already completing — no need to re-queue anything.
@@ -956,6 +1057,39 @@ class TestShutdownRejectionHandling:
 class TestSandboxSessionCompletionReset:
     """The orchestrator is persistent across sandbox sessions: when one ends
     we reset per-session state but stay alive for the next external signal."""
+
+    async def test_ack_is_processed_before_queued_session_completion(
+        self, monkeypatch, fixed_now, silent_workflow_logger
+    ):
+        workflow = TaskManagementWorkflow()
+        workflow._run_id = "run-id"
+        workflow._sandbox_alive = True
+        workflow._child_completion = ChildCompletion(success=True, error=None, sandbox_id="sb-1", timed_out=False)
+        workflow._pending_ack_slots["ack-delivered"] = PendingAckSlot(
+            signal_name="send_followup_message",
+            sent_at=fixed_now.now,
+            signal_args=["ack-delivered", "already delivered", [], "user"],
+        )
+        workflow._child_acks.append(
+            ChildAck(
+                signal_name="send_followup_message",
+                ack_id="ack-delivered",
+                accepted=True,
+                detail=None,
+                received_at=fixed_now.now,
+            )
+        )
+        monkeypatch.setattr(task_management_workflow_module.workflow, "wait_condition", AsyncMock())
+        monkeypatch.setattr(workflow, "_persist_pending_followups", AsyncMock())
+
+        assert await workflow._wait_for_signal() is TaskEvent.CHILD_FORWARDED
+        await workflow._drain_child_signals()
+        assert workflow._pending_ack_slots == {}
+
+        assert await workflow._wait_for_signal() is TaskEvent.CHILD_COMPLETED
+        await workflow._on_sandbox_session_completed()
+
+        assert workflow._pending_external_followups == []
 
     async def test_session_completion_does_not_close_orchestrator(self, monkeypatch, fixed_now, silent_workflow_logger):
         # Hardest assertion to lose: after `_on_sandbox_session_completed`,
@@ -1013,6 +1147,24 @@ class TestSandboxSessionCompletionReset:
         assert workflow._pending_ack_slots == {}
         persist_mock.assert_awaited()
 
+    async def test_unacked_steer_is_requeued_without_stale_intent(self, monkeypatch, silent_workflow_logger, fixed_now):
+        workflow = TaskManagementWorkflow()
+        workflow._run_id = "run-id"
+        workflow._sandbox_alive = True
+        workflow._child_completion = ChildCompletion(success=True, error=None, sandbox_id="sb-1", timed_out=False)
+        workflow._pending_ack_slots["ack-steer"] = PendingAckSlot(
+            signal_name=SEND_STEER_SIGNAL,
+            sent_at=fixed_now.now,
+            signal_args=["ack-steer", "survive replacement", [], "user"],
+        )
+        monkeypatch.setattr(workflow, "_persist_pending_followups", AsyncMock())
+
+        await workflow._on_sandbox_session_completed()
+
+        assert workflow._pending_external_followups == [
+            PendingExternalFollowup(message="survive replacement", artifact_ids=[], source="user", steer=False)
+        ]
+
 
 class TestPendingFollowupPersistence:
     async def test_restore_pending_seeds_in_memory_queue(self, monkeypatch, silent_workflow_logger):
@@ -1042,7 +1194,7 @@ class TestPendingFollowupPersistence:
 
         assert workflow._pending_external_followups == [
             PendingExternalFollowup(message="queued-1", artifact_ids=[], source="user"),
-            PendingExternalFollowup(message="queued-2", artifact_ids=["a1"], source="user"),
+            PendingExternalFollowup(message="queued-2", artifact_ids=["a1"], source="user", sequence=1),
         ]
 
     async def test_restore_swallows_read_error(self, monkeypatch, silent_workflow_logger):
@@ -1082,4 +1234,6 @@ class TestPendingFollowupPersistence:
         await workflow._persist_pending_followups()
 
         assert captured["input"].run_id == "run-id"
-        assert captured["input"].followups == [{"message": "persist-me", "artifact_ids": ["a1"], "source": "user"}]
+        assert captured["input"].followups == [
+            {"message": "persist-me", "artifact_ids": ["a1"], "source": "user", "steer": False, "sequence": 0}
+        ]
