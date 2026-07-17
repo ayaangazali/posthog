@@ -122,9 +122,9 @@ procs:
         # and AI_BLOB_OFFLOAD_TEAMS are set, so the env below points it at the local
         # objectstorage (SeaweedFS) ai-blobs bucket and enables offload for team 1.
         # It reads persons/groups via PersonHog (never writes), so PersonHog is required.
-        # Consumes the shared events_plugin_ingestion topic (capture-ai produces there
-        # locally), so AI events are also processed by the combined consumer — a
-        # dev-only double-write to ai_events; the offloaded (phblob://) row is this one.
+        # Consumes the dedicated ai_events_ingestion topic, which carries AI-only traffic:
+        # Caddy routes /i/v0/ai* to capture-ai, and capture-ai produces everything it
+        # receives there — same shape as the sibling replay/logs capture pairs.
         shell: 'bin/wait-for-docker && PLUGIN_SERVER_MODE=ingestion-v2 INGESTION_PIPELINE=ai HTTP_SERVER_PORT=6746 ./bin/posthog-node'
         capability: ai_capture
         ready_pattern: 'All systems go'
@@ -132,7 +132,7 @@ procs:
             layer: Ingestion pipeline
             tech: Node
         env:
-            INGESTION_CONSUMER_CONSUME_TOPIC: events_plugin_ingestion
+            INGESTION_CONSUMER_CONSUME_TOPIC: ai_events_ingestion
             INGESTION_CONSUMER_GROUP_ID: ingestion-ai
             PERSONHOG_ENABLED: 'true'
             PERSONHOG_ADDR: '127.0.0.1:50052'
