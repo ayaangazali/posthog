@@ -487,6 +487,11 @@ class AwsCloudTrailSourceConfig(config.Config):
 
 
 @config.config
+class AxiomSourceConfig(config.Config):
+    pass
+
+
+@config.config
 class AzureBlobSourceConfig(config.Config):
     pass
 
@@ -3359,6 +3364,11 @@ class PlausibleSourceConfig(config.Config):
 
 
 @config.config
+class PlivoSourceConfig(config.Config):
+    pass
+
+
+@config.config
 class PlunkSourceConfig(config.Config):
     pass
 
@@ -5008,6 +5018,7 @@ def get_config_for_source(source: ExternalDataSourceType):
         ExternalDataSourceType.AVIATOR: AviatorSourceConfig,
         ExternalDataSourceType.AWIN: AwinSourceConfig,
         ExternalDataSourceType.AWSCLOUDTRAIL: AwsCloudTrailSourceConfig,
+        ExternalDataSourceType.AXIOM: AxiomSourceConfig,
         ExternalDataSourceType.AZUREBLOB: AzureBlobSourceConfig,
         ExternalDataSourceType.AZUREDEVOPS: AzureDevOpsSourceConfig,
         ExternalDataSourceType.AZURETABLESTORAGE: AzureTableStorageSourceConfig,
@@ -5519,6 +5530,7 @@ def get_config_for_source(source: ExternalDataSourceType):
         ExternalDataSourceType.PLANHAT: PlanhatSourceConfig,
         ExternalDataSourceType.PLATFORMSH: PlatformShSourceConfig,
         ExternalDataSourceType.PLAUSIBLE: PlausibleSourceConfig,
+        ExternalDataSourceType.PLIVO: PlivoSourceConfig,
         ExternalDataSourceType.PLUNK: PlunkSourceConfig,
         ExternalDataSourceType.POCKET: PocketSourceConfig,
         ExternalDataSourceType.PODIUM: PodiumSourceConfig,

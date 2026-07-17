@@ -23372,7 +23372,9 @@
                 "Kajabi",
                 "Shopware",
                 "Dubsado",
-                "Campfire"
+                "Campfire",
+                "Axiom",
+                "Plivo"
             ],
             "type": "string"
         },

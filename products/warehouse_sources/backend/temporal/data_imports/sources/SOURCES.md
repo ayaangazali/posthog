@@ -630,6 +630,7 @@ doesn't conflict with concurrent PRs.
 - automox
 - autumn
 - aws_cloudtrail
+- axiom
 - azure_blob
 - azure_table_storage
 - backblaze
@@ -847,6 +848,7 @@ doesn't conflict with concurrent PRs.
 - pivotal_tracker
 - piwik
 - planetscale
+- plivo
 - plunk
 - pocket
 - podium
