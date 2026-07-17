@@ -142,7 +142,7 @@ function WorkflowRunMetrics(props: WorkflowLogicProps): JSX.Element {
 
     return (
         <div className="flex flex-col gap-2" data-attr="workflow-metrics">
-            <div className="flex flex-row gap-2 flex-wrap justify-between">
+            <div className="flex flex-row gap-2 flex-wrap justify-end items-center">
                 <div className="flex flex-row gap-2 items-center flex-wrap">
                     <span className="text-muted text-xs whitespace-nowrap">Metrics for</span>
                     <LemonSelect
@@ -283,7 +283,7 @@ function BatchJobMetrics({ job }: { job: HogFlowBatchJob }): JSX.Element {
 
     return (
         <div className="flex flex-col gap-2">
-            <div className="flex flex-row gap-2 flex-wrap justify-between">
+            <div className="flex flex-row gap-2 flex-wrap justify-end items-center">
                 <div className="flex flex-row gap-2 items-center flex-wrap">
                     <span className="text-muted text-xs whitespace-nowrap">Metrics for</span>
                     <LemonSelect
