@@ -728,6 +728,7 @@ export interface sourceWizardLogicActions {
             | 'DagsterCloud'
             | 'Databricks'
             | 'Datadog'
+            | 'DataForSEO'
             | 'Datahub'
             | 'Datascope'
             | 'Datorama'
