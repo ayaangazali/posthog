@@ -343,6 +343,10 @@ export interface workflowMetricsSummaryLogicValues {
     inProgressTotal: number
     inProgressTotalLoading: boolean
     loading: boolean
+    messagingChannels: {
+        hasEmail: boolean
+        hasPush: boolean
+    }
     metricNameBySummaryMetric: Record<WorkflowSummaryMetric, string>
     pushActions: ({
         config: {
@@ -395,10 +399,6 @@ export interface workflowMetricsSummaryLogicValues {
     pushMetricsRows: PushMetricRow[]
     pushTotalsByActionId: Record<string, Partial<Record<PushMetric, number>>>
     pushTotalsByActionIdLoading: boolean
-    messagingChannels: {
-        hasEmail: boolean
-        hasPush: boolean
-    }
     sentSummaryLabel: string
     summaryMetricKeys: WorkflowSummaryMetric[]
     workflowSummaryTrends: AppMetricsTimeSeriesResponse | null
@@ -591,6 +591,11 @@ export interface workflowMetricsSummaryLogicMeta {
             type: 'function_push'
             updated_at?: number | undefined
         } & Record<string, unknown>)[]
+        messagingChannels: (appMetricsTrends: AppMetricsTimeSeriesResponse | null) => {
+            hasEmail: boolean
+            hasPush: boolean
+        }
+        sentSummaryLabel: (messagingChannels: { hasEmail: boolean; hasPush: boolean }) => string
         metricNameBySummaryMetric: (
             appMetricsTrends: AppMetricsTimeSeriesResponse | null
         ) => Record<WorkflowSummaryMetric, string>
@@ -601,14 +606,9 @@ export interface workflowMetricsSummaryLogicMeta {
                 dateFrom: Dayjs
                 dateTo: Dayjs
                 diffMs: number
-            },
+            }, // appMetricsLogic
             arg: string
         ) => string
-        messagingChannels: (appMetricsTrends: AppMetricsTimeSeriesResponse | null) => {
-            hasEmail: boolean
-            hasPush: boolean
-        }
-        sentSummaryLabel: (messagingChannels: { hasEmail: boolean; hasPush: boolean }) => string
         workflowSummaryTrends: (
             appMetricsTrends: AppMetricsTimeSeriesResponse | null,
             completedTrends: AppMetricsTimeSeriesResponse | null,
@@ -616,8 +616,11 @@ export interface workflowMetricsSummaryLogicMeta {
             getCompletedSingleTrendSeries: (
                 name: string,
                 previousPeriod?: boolean
-            ) => AppMetricsTimeSeriesResponse | null,
-            messagingChannels: { hasEmail: boolean; hasPush: boolean },
+            ) => AppMetricsTimeSeriesResponse | null, // appMetricsLogic
+            messagingChannels: {
+                hasEmail: boolean
+                hasPush: boolean
+            },
             sentSummaryLabel: string
         ) => AppMetricsTimeSeriesResponse | null
         emailMetricsRows: (
@@ -899,7 +902,7 @@ export const workflowMetricsSummaryLogic = kea<workflowMetricsSummaryLogicType>(
         // channel-aware "sent" summary tile + chart, so a push-only flow doesn't say "Emails sent".
         messagingChannels: [
             (s) => [s.appMetricsTrends],
-            (appMetricsTrends): { hasEmail: boolean; hasPush: boolean } => ({
+            (appMetricsTrends: AppMetricsTimeSeriesResponse | null): { hasEmail: boolean; hasPush: boolean } => ({
                 hasEmail: !!appMetricsTrends?.series.some((x: { name: string }) => x.name === 'email_sent'),
                 hasPush: !!appMetricsTrends?.series.some((x: { name: string }) => x.name === 'push_sent'),
             }),
