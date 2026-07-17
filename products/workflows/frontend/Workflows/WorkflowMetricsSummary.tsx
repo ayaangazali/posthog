@@ -68,14 +68,7 @@ export function WorkflowMetricsSummary({
             {
                 title: 'Step',
                 key: 'step',
-                render: (_, row) => (
-                    <div className="flex items-center gap-2">
-                        <span className="flex text-lg shrink-0 text-secondary">
-                            <IconLetter />
-                        </span>
-                        <span className="font-medium">{row.email}</span>
-                    </div>
-                ),
+                render: (_, row) => <span className="font-medium">{row.email}</span>,
             },
             { title: 'Sent', key: 'sent', align: 'right', render: (_, row) => row.sent.toLocaleString() },
             {
@@ -147,14 +140,7 @@ export function WorkflowMetricsSummary({
             {
                 title: 'Step',
                 key: 'step',
-                render: (_, row) => (
-                    <div className="flex items-center gap-2">
-                        <span className="flex text-lg shrink-0 text-secondary">
-                            <IconNotification />
-                        </span>
-                        <span className="font-medium">{row.push}</span>
-                    </div>
-                ),
+                render: (_, row) => <span className="font-medium">{row.push}</span>,
             },
             { title: 'Sent', key: 'sent', align: 'right', render: (_, row) => row.sent.toLocaleString() },
             { title: 'Skipped', key: 'skipped', align: 'right', render: (_, row) => row.skipped.toLocaleString() },
@@ -295,13 +281,23 @@ export function WorkflowMetricsSummary({
             {/* A table per channel, since email and push report different metrics. */}
             {emailMetricsRows.length > 0 ? (
                 <div className="flex flex-col gap-1">
-                    <LemonLabel>Email steps</LemonLabel>
+                    <LemonLabel className="flex items-center gap-1.5">
+                        <span className="flex text-lg text-secondary">
+                            <IconLetter />
+                        </span>
+                        Email steps
+                    </LemonLabel>
                     <LemonTable columns={emailColumns} dataSource={emailMetricsRows} rowKey="id" size="small" />
                 </div>
             ) : null}
             {pushMetricsRows.length > 0 ? (
                 <div className="flex flex-col gap-1">
-                    <LemonLabel>Push steps</LemonLabel>
+                    <LemonLabel className="flex items-center gap-1.5">
+                        <span className="flex text-lg text-secondary">
+                            <IconNotification />
+                        </span>
+                        Push steps
+                    </LemonLabel>
                     <LemonTable columns={pushColumns} dataSource={pushMetricsRows} rowKey="id" size="small" />
                 </div>
             ) : null}
