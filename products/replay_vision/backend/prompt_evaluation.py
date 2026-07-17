@@ -95,13 +95,6 @@ def evaluation_in_flight(evaluation: Any) -> bool:
         return False
     if started_at.tzinfo is None:
         return False
-    # Deferred: this business module is imported by `quota`, while importing the temporal package
-    # eagerly loads the activity graph (incl. `create_observation`, which imports `quota` back).
-    # A module-level import here closes that cycle; keeping it lazy breaks it.
-    from products.replay_vision.backend.temporal.constants import (  # noqa: PLC0415
-        EVALUATE_PROMPT_SUGGESTION_EXECUTION_TIMEOUT,
-    )
-
     return timezone.now() - started_at < EVALUATE_PROMPT_SUGGESTION_EXECUTION_TIMEOUT + _EVALUATION_RUNNING_GRACE
 
 
