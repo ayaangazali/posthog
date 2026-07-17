@@ -522,7 +522,6 @@ tools:
             - default_modifiers
             - person_on_events_querying_enabled
             - organization
-            # Managed via error-tracking-settings-update.
             - autocapture_exceptions_opt_in
         param_overrides:
             id:
