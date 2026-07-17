@@ -390,6 +390,30 @@ def get_sandbox_mcp_session_user(scope: str) -> int | None:
     return get_tasks_cache().get(_sandbox_mcp_session_cache_key(scope))
 
 
+def _sandbox_github_identity_cache_key(scope: str) -> str:
+    return f"tasks:sandbox-github-identity:{scope}"
+
+
+def mark_sandbox_github_identity(scope: str, user_id: int) -> None:
+    """Record which actor the sandbox's in-place GitHub credentials reflect.
+
+    The value is the actor whose token was applied, or who was logged out (no
+    usable access) — either way the sandbox no longer carries a *different*
+    actor's identity. Self-expires after MCP_TOKEN_REFRESH_INTERVAL_SECONDS; an
+    absent entry reads as "must re-establish", which is always safe because
+    re-establishing re-applies or clears rather than trusting stale creds.
+    """
+    get_tasks_cache().set(
+        _sandbox_github_identity_cache_key(scope), user_id, timeout=MCP_TOKEN_REFRESH_INTERVAL_SECONDS
+    )
+
+
+def get_sandbox_github_identity_user(scope: str) -> int | None:
+    """Actor id the sandbox's GitHub credentials were last bound to (or logged
+    out for) within the freshness window, or None when unknown."""
+    return get_tasks_cache().get(_sandbox_github_identity_cache_key(scope))
+
+
 @dataclass(frozen=True)
 class McpServerConfig:
     """Configuration for a remote MCP server matching the ACP McpServer schema.
