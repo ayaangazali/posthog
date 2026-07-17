@@ -1567,7 +1567,7 @@ class TestQueryUsageReportSQL:
         sponsor_query = mock_sync_execute.call_args_list[1].args[0]
         sponsor_params = mock_sync_execute.call_args_list[1].args[1]
         assert "max(relay) AS has_verified_relay" in base_query
-        assert "uniqExact(tuple(event, span_id))" in sponsor_query
+        assert "uniqExact(tuple(event, relay_id))" in sponsor_query
         assert "sponsors.generation_count * %(allowance)s" in sponsor_query
         assert sponsor_params["allowance"] == GATEWAY_SPONSORED_AI_EVENTS_PER_GENERATION
         assert sponsor_params["sponsor_begin"] == begin - timedelta(days=1)
