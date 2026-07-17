@@ -183,8 +183,7 @@ class Command(BaseCommand):
                         "conversations_settings",
                     ]
                 )
-                # Clear the ErrorTrackingSettings mirror directly instead of leaning on the Team
-                # post_save signal — keeps the reset correct if the save path ever changes.
+                # Clear the mirror directly rather than relying on the Team post_save signal.
                 sync_autocapture_opt_in(team_id=team.id, opt_in=None)
 
             # Scout run-state, so the fleet cold-starts with no learned memory or stale runs.

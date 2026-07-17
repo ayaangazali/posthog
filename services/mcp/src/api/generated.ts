@@ -21907,6 +21907,8 @@ export namespace Schemas {
     }
 
     export interface ErrorTrackingSettings {
+      /** Whether the SDK autocaptures unhandled exceptions for this project. Enabling starts exception ingestion. */
+      autocapture_exceptions_opt_in?: boolean;
       /**
          * Maximum number of exception events ingested per bucket for the entire project. Null removes the limit.
          * @minimum 1
@@ -41783,6 +41785,8 @@ export namespace Schemas {
     }
 
     export interface PatchedErrorTrackingSettings {
+      /** Whether the SDK autocaptures unhandled exceptions for this project. Enabling starts exception ingestion. */
+      autocapture_exceptions_opt_in?: boolean;
       /**
          * Maximum number of exception events ingested per bucket for the entire project. Null removes the limit.
          * @minimum 1

@@ -907,6 +907,12 @@ export const ErrorTrackingReleasesPartialUpdateBody = /* @__PURE__ */ zod.object
 })
 
 export const ErrorTrackingSettingsUpdateSettingsPartialUpdateBody = /* @__PURE__ */ zod.object({
+    autocapture_exceptions_opt_in: zod
+        .boolean()
+        .optional()
+        .describe(
+            'Whether the SDK autocaptures unhandled exceptions for this project. Enabling starts exception ingestion.'
+        ),
     project_rate_limit_value: zod
         .number()
         .min(1)

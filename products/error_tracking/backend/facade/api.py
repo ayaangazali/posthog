@@ -183,6 +183,7 @@ def resolve_fingerprints(team_id: int, issue_ids: list[str]) -> list[str]:
 
 def _to_settings(settings) -> contracts.ErrorTrackingSettings:
     return contracts.ErrorTrackingSettings(
+        autocapture_exceptions_opt_in=bool(settings.autocapture_exceptions_opt_in),
         project_rate_limit_value=settings.project_rate_limit_value,
         project_rate_limit_bucket_size_minutes=settings.project_rate_limit_bucket_size_minutes,
         per_issue_rate_limit_value=settings.per_issue_rate_limit_value,
@@ -194,7 +195,7 @@ def get_settings(team_id: int) -> contracts.ErrorTrackingSettings:
     return _to_settings(logic.get_or_create_settings(team_id))
 
 
-def update_settings(team_id: int, fields: dict[str, int | None]) -> contracts.ErrorTrackingSettings:
+def update_settings(team_id: int, fields: dict[str, int | bool | None]) -> contracts.ErrorTrackingSettings:
     return _to_settings(logic.update_settings(team_id=team_id, fields=fields))
 
 

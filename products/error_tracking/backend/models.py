@@ -735,8 +735,7 @@ class ErrorTrackingSettings(models.Model):
     project_rate_limit_bucket_size_minutes = models.IntegerField(null=True, blank=True)
     per_issue_rate_limit_value = models.IntegerField(null=True, blank=True)
     per_issue_rate_limit_bucket_size_minutes = models.IntegerField(null=True, blank=True)
-    # Read source of truth; Team.autocapture_exceptions_opt_in is still dual-written onto it
-    # during the move. Null == disabled.
+    # Read source of truth; dual-written from Team during the move. Null == disabled.
     autocapture_exceptions_opt_in = models.BooleanField(null=True, blank=True)
 
     class Meta:
@@ -744,11 +743,7 @@ class ErrorTrackingSettings(models.Model):
 
 
 def sync_autocapture_opt_in(team_id: int, opt_in: bool | None) -> None:
-    """Mirror Team.autocapture_exceptions_opt_in onto ErrorTrackingSettings while the setting is being moved.
-
-    Only opted-in teams get a row — a missing row reads as disabled, so teams that never opted in stay
-    row-less. Disabling an already-opted-in team syncs the existing row instead of creating one.
-    """
+    """Mirror Team.autocapture_exceptions_opt_in onto ErrorTrackingSettings. Only opted-in teams get a row."""
     if opt_in:
         ErrorTrackingSettings.objects.update_or_create(
             team_id=team_id, defaults={"autocapture_exceptions_opt_in": True}
@@ -758,13 +753,7 @@ def sync_autocapture_opt_in(team_id: int, opt_in: bool | None) -> None:
 
 
 def autocapture_exceptions_enabled(team: "Team") -> bool:
-    """Whether exception autocapture is opted in, read from ErrorTrackingSettings.
-
-    ErrorTrackingSettings is the sole read source: opted-in teams were backfilled, so the
-    Team column is no longer consulted (it's still dual-written for rust, the API
-    serializers, and the frontend toggle until a later phase). A missing row or a null
-    value reads as disabled.
-    """
+    """Whether exception autocapture is opted in, read from ErrorTrackingSettings. Missing/null == disabled."""
     return bool(
         ErrorTrackingSettings.objects.filter(team_id=team.id)
         .values_list("autocapture_exceptions_opt_in", flat=True)

@@ -73,6 +73,22 @@ class TestErrorTrackingSettingsAPI(APIBaseTest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsNone(response.json()["project_rate_limit_value"])
 
+    def test_update_settings_toggles_autocapture_and_dual_writes_team(self):
+        response = self.client.patch(
+            f"{self._base_url()}/update_settings/",
+            {"autocapture_exceptions_opt_in": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["autocapture_exceptions_opt_in"])
+
+        self.assertTrue(ErrorTrackingSettings.objects.get(team=self.team).autocapture_exceptions_opt_in)
+        self.team.refresh_from_db()
+        self.assertTrue(self.team.autocapture_exceptions_opt_in)
+
+        get_response = self.client.get(f"{self._base_url()}/retrieve_settings/")
+        self.assertTrue(get_response.json()["autocapture_exceptions_opt_in"])
+
     @parameterized.expand(
         [
             ("read_scope", ["error_tracking:read"], status.HTTP_200_OK),

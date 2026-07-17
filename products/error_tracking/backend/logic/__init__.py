@@ -2,7 +2,9 @@ from datetime import datetime
 from typing import Any, TypeVar, cast
 from uuid import UUID
 
+from django.db import transaction
 from django.db.models import Count, Q, QuerySet
+from django.utils import timezone
 
 from posthog.models.integration import (
     GitHubIntegration,
@@ -51,6 +53,7 @@ SPIKE_EVENT_ORDER_FIELDS = (
 )
 
 SETTINGS_FIELDS = (
+    "autocapture_exceptions_opt_in",
     "project_rate_limit_value",
     "project_rate_limit_bucket_size_minutes",
     "per_issue_rate_limit_value",
@@ -346,13 +349,22 @@ def get_or_create_settings(team_id: int) -> ErrorTrackingSettings:
     return settings
 
 
-def update_settings(team_id: int, fields: dict[str, int | None]) -> ErrorTrackingSettings:
+def update_settings(team_id: int, fields: dict[str, int | bool | None]) -> ErrorTrackingSettings:
+    from posthog.models.team.team import Team  # noqa: PLC0415 — avoids an error_tracking <-> Team import cycle
+
     settings = get_or_create_settings(team_id)
     updates = {key: value for key, value in fields.items() if key in SETTINGS_FIELDS}
-    for key, value in updates.items():
-        setattr(settings, key, value)
-    if updates:
-        settings.save(update_fields=list(updates))
+    with transaction.atomic():
+        for key, value in updates.items():
+            setattr(settings, key, value)
+        if updates:
+            settings.save(update_fields=list(updates))
+        # Mirror onto Team while it's still dual-written; updated_at set since update() skips auto_now.
+        if "autocapture_exceptions_opt_in" in updates:
+            Team.objects.filter(id=team_id).update(
+                autocapture_exceptions_opt_in=updates["autocapture_exceptions_opt_in"],
+                updated_at=timezone.now(),
+            )
     return settings
 
 

@@ -213,6 +213,18 @@ class TestErrorTrackingFacadeAPI(BaseTest):
 
         assert api.get_settings(other_team.id).project_rate_limit_value is None
 
+    @parameterized.expand([[True], [False]])
+    def test_update_settings_autocapture_dual_writes_settings_and_team(self, opt_in: bool):
+        updated_at_before = self.team.updated_at
+
+        updated = api.update_settings(self.team.id, {"autocapture_exceptions_opt_in": opt_in})
+
+        assert updated.autocapture_exceptions_opt_in is opt_in
+        assert api.get_settings(self.team.id).autocapture_exceptions_opt_in is opt_in
+        self.team.refresh_from_db()
+        assert self.team.autocapture_exceptions_opt_in is opt_in
+        assert self.team.updated_at > updated_at_before
+
     def test_spike_detection_config_get_and_update(self):
         config = api.get_spike_detection_config(self.team.id)
         assert isinstance(config, contracts.ErrorTrackingSpikeDetectionConfig)
