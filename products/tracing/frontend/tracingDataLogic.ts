@@ -1402,14 +1402,6 @@ export const tracingDataLogic = kea<tracingDataLogicType>([
             }),
         // Bulk restores (URL params, saved views) re-query without an interaction capture.
         setFilters: () => actions.runQuery(),
-        // Feature flags land asynchronously (posthog.js /flags), potentially after the first
-        // runQuery. If that flip just made the heatmap visible (?chart=heatmap deep link with
-        // the flag on), fetch the data the earlier runQuery skipped.
-        setFeatureFlags: () => {
-            if (values.showHeatmap && values.rawLatencyHeatmap.length === 0 && !values.latencyHeatmapLoading) {
-                actions.fetchLatencyHeatmap()
-            }
-        },
         applyHeatmapBrush: ({ selection }) => {
             const updates = heatmapBrushToFilters(
                 values.latencyHeatmapData,
