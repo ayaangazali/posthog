@@ -3,7 +3,7 @@ from typing import Optional
 
 from products.warehouse_sources.backend.types import IncrementalField, IncrementalFieldType
 
-# Every X-Series v2.0 record carries a monotonically increasing integer
+# Every X-Series record carries a monotonically increasing integer
 # `version`; the same `after=<version>` param used for keyset pagination doubles
 # as a lossless incremental cursor, so the menu is shared across endpoints.
 _VERSION_INCREMENTAL_FIELDS: list[IncrementalField] = [

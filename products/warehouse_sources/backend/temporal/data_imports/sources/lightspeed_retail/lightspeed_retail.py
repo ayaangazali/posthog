@@ -11,11 +11,14 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from products.warehouse_sources.backend.temporal.data_imports.pipelines.pipeline.typings import SourceResponse
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.http import make_tracked_session
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.resumable import ResumableSourceManager
+from products.warehouse_sources.backend.temporal.data_imports.sources.lightspeed_retail.constants import (
+    LIGHTSPEED_RETAIL_API_VERSION_2026_01,
+)
 from products.warehouse_sources.backend.temporal.data_imports.sources.lightspeed_retail.settings import (
     LIGHTSPEED_RETAIL_ENDPOINTS,
 )
 
-# X-Series v2.0 list pages cap at 200 items.
+# X-Series list pages cap at 200 items.
 PAGE_SIZE = 200
 REQUEST_TIMEOUT_SECONDS = 60
 # Rate limit is 300 × registers + 50 requests per 5-minute window (429 with a
@@ -48,8 +51,10 @@ def _clean_domain_prefix(domain_prefix: str) -> str:
     return prefix
 
 
-def _base_url(domain_prefix: str) -> str:
-    return f"https://{_clean_domain_prefix(domain_prefix)}.retail.lightspeed.app/api/2.0"
+def _base_url(domain_prefix: str, api_version: str = LIGHTSPEED_RETAIL_API_VERSION_2026_01) -> str:
+    # `api_version` is the pinned vendor version, a `/api/<version>` path segment. Defaults to the
+    # current version for credential validation, which runs before any row is pinned.
+    return f"https://{_clean_domain_prefix(domain_prefix)}.retail.lightspeed.app/api/{api_version}"
 
 
 def _to_version(value: Any) -> Optional[int]:
@@ -62,11 +67,17 @@ def _to_version(value: Any) -> Optional[int]:
         return None
 
 
-def _build_url(domain_prefix: str, path: str, after: Optional[int], page_size: int = PAGE_SIZE) -> str:
+def _build_url(
+    domain_prefix: str,
+    path: str,
+    after: Optional[int],
+    api_version: str = LIGHTSPEED_RETAIL_API_VERSION_2026_01,
+    page_size: int = PAGE_SIZE,
+) -> str:
     params: dict[str, Any] = {"page_size": page_size}
     if after is not None:
         params["after"] = after
-    return f"{_base_url(domain_prefix)}{path}?{urlencode(params)}"
+    return f"{_base_url(domain_prefix, api_version)}{path}?{urlencode(params)}"
 
 
 def validate_credentials(domain_prefix: str, api_token: str) -> bool:
@@ -87,6 +98,7 @@ def get_rows(
     endpoint: str,
     logger: FilteringBoundLogger,
     resumable_source_manager: ResumableSourceManager[LightspeedRetailResumeConfig],
+    api_version: str = LIGHTSPEED_RETAIL_API_VERSION_2026_01,
     should_use_incremental_field: bool = False,
     db_incremental_field_last_value: Any = None,
 ) -> Iterator[list[dict[str, Any]]]:
@@ -125,7 +137,7 @@ def get_rows(
         return response.json()
 
     while True:
-        data = fetch_page(_build_url(domain_prefix, config.path, after))
+        data = fetch_page(_build_url(domain_prefix, config.path, after, api_version))
         items = data.get("data", []) or []
 
         if not items:
@@ -153,6 +165,7 @@ def lightspeed_retail_source(
     endpoint: str,
     logger: FilteringBoundLogger,
     resumable_source_manager: ResumableSourceManager[LightspeedRetailResumeConfig],
+    api_version: str = LIGHTSPEED_RETAIL_API_VERSION_2026_01,
     should_use_incremental_field: bool = False,
     db_incremental_field_last_value: Optional[Any] = None,
 ) -> SourceResponse:
@@ -166,6 +179,7 @@ def lightspeed_retail_source(
             endpoint=endpoint,
             logger=logger,
             resumable_source_manager=resumable_source_manager,
+            api_version=api_version,
             should_use_incremental_field=should_use_incremental_field,
             db_incremental_field_last_value=db_incremental_field_last_value,
         ),

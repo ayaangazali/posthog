@@ -57,8 +57,12 @@ class TestCleanDomainPrefix:
         with pytest.raises(ValueError):
             _clean_domain_prefix(value)
 
-    def test_base_url(self):
-        assert _base_url("mystore") == "https://mystore.retail.lightspeed.app/api/2.0"
+    def test_base_url_defaults_to_current_version(self):
+        assert _base_url("mystore") == "https://mystore.retail.lightspeed.app/api/2026-01"
+
+    @pytest.mark.parametrize("api_version", ["2.0", "2026-01"])
+    def test_base_url_embeds_version_in_path(self, api_version):
+        assert _base_url("mystore", api_version) == f"https://mystore.retail.lightspeed.app/api/{api_version}"
 
 
 class TestToVersion:
@@ -80,13 +84,18 @@ class TestToVersion:
 class TestBuildUrl:
     def test_without_after(self):
         url = _build_url("mystore", "/sales", None)
-        assert url == "https://mystore.retail.lightspeed.app/api/2.0/sales?page_size=200"
+        assert url == "https://mystore.retail.lightspeed.app/api/2026-01/sales?page_size=200"
 
     def test_with_after(self):
         url = _build_url("mystore", "/sales", 999)
         query = parse_qs(urlparse(url).query)
         assert query["after"] == ["999"]
         assert query["page_size"] == ["200"]
+
+    @pytest.mark.parametrize("api_version", ["2.0", "2026-01"])
+    def test_pins_version_into_path(self, api_version):
+        url = _build_url("mystore", "/sales", 999, api_version)
+        assert urlparse(url).path == f"/api/{api_version}/sales"
 
 
 class TestValidateCredentials:
@@ -138,6 +147,20 @@ class TestGetRows:
         assert "after" not in parse_qs(urlparse(urls[0]).query)
         assert parse_qs(urlparse(urls[1]).query)["after"] == ["20"]
         assert parse_qs(urlparse(urls[2]).query)["after"] == ["30"]
+
+    @pytest.mark.parametrize("api_version", ["2.0", "2026-01"])
+    @mock.patch(
+        "products.warehouse_sources.backend.temporal.data_imports.sources.lightspeed_retail.lightspeed_retail.make_tracked_session"
+    )
+    def test_pinned_version_reaches_request_path(self, mock_session, api_version):
+        # The resolved pin must reach the `/api/<version>` request path, or a source pinned to a
+        # supported version would silently sync against whatever version the request layer defaults to.
+        mock_session.return_value.get.return_value = _response([])
+
+        list(get_rows("mystore", "token", "sales", mock.MagicMock(), _make_manager(), api_version=api_version))
+
+        url = mock_session.return_value.get.call_args.args[0]
+        assert urlparse(url).path == f"/api/{api_version}/sales"
 
     @mock.patch(
         "products.warehouse_sources.backend.temporal.data_imports.sources.lightspeed_retail.lightspeed_retail.make_tracked_session"

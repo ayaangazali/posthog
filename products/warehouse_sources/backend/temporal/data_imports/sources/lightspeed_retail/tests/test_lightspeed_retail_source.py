@@ -125,6 +125,7 @@ class TestLightspeedRetailSource:
     def test_source_for_pipeline_plumbs_arguments(self, mock_lightspeed_source):
         inputs = mock.MagicMock()
         inputs.schema_name = "sales"
+        inputs.api_version = "2.0"
         inputs.should_use_incremental_field = True
         inputs.db_incremental_field_last_value = 999
         manager = mock.MagicMock()
@@ -137,6 +138,8 @@ class TestLightspeedRetailSource:
         assert kwargs["api_token"] == "api-token"
         assert kwargs["endpoint"] == "sales"
         assert kwargs["resumable_source_manager"] is manager
+        # A present pin is honored verbatim so a customer never silently moves versions.
+        assert kwargs["api_version"] == "2.0"
         assert kwargs["should_use_incremental_field"] is True
         assert kwargs["db_incremental_field_last_value"] == 999
 
@@ -152,3 +155,17 @@ class TestLightspeedRetailSource:
         self.source.source_for_pipeline(self.config, mock.MagicMock(), inputs)
 
         assert mock_lightspeed_source.call_args.kwargs["db_incremental_field_last_value"] is None
+
+    def test_new_sources_default_to_current_version(self):
+        # Newly created sources are stamped with default_version; it must be the current version,
+        # not the deprecated 2.0.
+        assert self.source.default_version == "2026-01"
+        assert set(self.source.supported_versions) == {"2.0", "2026-01"}
+
+    def test_legacy_version_is_deprecated_and_current_is_not(self):
+        # The generic in-product warning keys off this metadata; the registry invariant test checks
+        # the set relationships but not that 2.0 specifically carries the deprecation.
+        deprecation = self.source.get_version_deprecation("2.0")
+        assert deprecation is not None
+        assert deprecation.sunset_at is None
+        assert self.source.get_version_deprecation("2026-01") is None

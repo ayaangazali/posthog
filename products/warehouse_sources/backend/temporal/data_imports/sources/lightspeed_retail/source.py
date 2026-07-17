@@ -13,7 +13,11 @@ from products.warehouse_sources.backend.temporal.data_imports.pipelines.pipeline
     SourceInputs,
     SourceResponse,
 )
-from products.warehouse_sources.backend.temporal.data_imports.sources.common.base import FieldType, ResumableSource
+from products.warehouse_sources.backend.temporal.data_imports.sources.common.base import (
+    FieldType,
+    ResumableSource,
+    VersionDeprecation,
+)
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.canonical_descriptions import (
     CanonicalDescriptions,
 )
@@ -22,6 +26,10 @@ from products.warehouse_sources.backend.temporal.data_imports.sources.common.res
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.schema import SourceSchema
 from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs import (
     LightspeedRetailSourceConfig,
+)
+from products.warehouse_sources.backend.temporal.data_imports.sources.lightspeed_retail.constants import (
+    LIGHTSPEED_RETAIL_API_VERSION_2_0,
+    LIGHTSPEED_RETAIL_API_VERSION_2026_01,
 )
 from products.warehouse_sources.backend.temporal.data_imports.sources.lightspeed_retail.lightspeed_retail import (
     LightspeedRetailResumeConfig,
@@ -37,8 +45,12 @@ from products.warehouse_sources.backend.types import ExternalDataSourceType
 
 @SourceRegistry.register
 class LightspeedRetailSource(ResumableSource[LightspeedRetailSourceConfig, LightspeedRetailResumeConfig]):
-    supported_versions = ("2.0",)
-    default_version = "2.0"
+    supported_versions = (LIGHTSPEED_RETAIL_API_VERSION_2_0, LIGHTSPEED_RETAIL_API_VERSION_2026_01)
+    default_version = LIGHTSPEED_RETAIL_API_VERSION_2026_01
+    api_docs_url = "https://x-series-api.lightspeedhq.com/docs/introduction"
+    # X-Series deprecated the legacy 2.0 version; no firm sunset date is published (deprecated
+    # endpoints increasingly return 410 Gone before an eventual retirement).
+    deprecated_versions = (VersionDeprecation(version=LIGHTSPEED_RETAIL_API_VERSION_2_0, sunset_at=None),)
 
     lists_tables_without_credentials = True  # static endpoint catalog — safe for public docs
 
@@ -150,6 +162,7 @@ Your domain prefix is the first part of your store URL — for `mystore.retail.l
             endpoint=inputs.schema_name,
             logger=inputs.logger,
             resumable_source_manager=resumable_source_manager,
+            api_version=self.resolve_api_version(inputs.api_version),
             should_use_incremental_field=inputs.should_use_incremental_field,
             db_incremental_field_last_value=inputs.db_incremental_field_last_value
             if inputs.should_use_incremental_field
