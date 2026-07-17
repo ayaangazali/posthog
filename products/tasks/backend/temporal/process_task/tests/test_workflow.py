@@ -23,6 +23,7 @@ from products.tasks.backend.models import SandboxSnapshot
 from products.tasks.backend.temporal.constants import INACTIVITY_TIMEOUT_USER_SECONDS, WARM_IDLE_TIMEOUT
 from products.tasks.backend.temporal.process_task import workflow as process_task_workflow_module
 from products.tasks.backend.temporal.process_task.activities import (
+    STEER_DECLINED_OUTCOME,
     CleanupSandboxInput,
     CompleteRunStreamInput,
     CreateSandboxForRepositoryInput,
@@ -303,6 +304,159 @@ class TestProcessTaskWorkflow:
         assert result.error is not None
 
 
+class TestProcessTaskFollowupDispatch:
+    async def test_declined_steers_requeue_in_arrival_order(self, monkeypatch):
+        workflow = ProcessTaskWorkflow()
+        workflow._context = _build_context(github_integration_id=123)
+        release_initial = asyncio.Event()
+        deliveries: list[tuple[str | None, bool]] = []
+
+        async def fake_send_followup(*, message, artifact_ids, steer=False):
+            deliveries.append((message, steer))
+            if message == "keep working":
+                await release_initial.wait()
+            elif steer:
+                return STEER_DECLINED_OUTCOME
+            return None
+
+        monkeypatch.setattr(workflow, "_send_followup_to_sandbox", fake_send_followup)
+        monkeypatch.setattr(process_task_workflow_module.workflow, "now", Mock(return_value=Mock()))
+        monkeypatch.setattr(process_task_workflow_module.workflow, "patched", Mock(return_value=True))
+        monkeypatch.setattr(process_task_workflow_module.workflow, "deprecate_patch", Mock())
+        monkeypatch.setattr(process_task_workflow_module.workflow, "logger", Mock())
+
+        await workflow.send_followup_message("keep working")
+        assert await workflow._dispatch_next_followup() is True
+        await asyncio.sleep(0)
+
+        await workflow.send_steer_message("use green instead")
+        assert await workflow._dispatch_next_followup() is True
+        await workflow.send_steer_message("use blue instead")
+        assert await workflow._dispatch_next_followup() is True
+
+        assert deliveries == [
+            ("keep working", False),
+            ("use green instead", True),
+            ("use blue instead", True),
+        ]
+        assert [(followup.message, followup.steer) for followup in workflow._pending_followups] == [
+            ("use green instead", False),
+            ("use blue instead", False),
+        ]
+        release_initial.set()
+        await workflow._finish_active_followup()
+        assert deliveries == [
+            ("keep working", False),
+            ("use green instead", True),
+            ("use blue instead", True),
+            ("use green instead", False),
+            ("use blue instead", False),
+        ]
+
+    async def test_terminal_drain_closes_followup_admission(self, monkeypatch):
+        workflow = ProcessTaskWorkflow()
+        workflow._context = _build_context(github_integration_id=123)
+        monkeypatch.setattr(process_task_workflow_module.workflow, "logger", Mock())
+
+        await workflow._finish_active_followup()
+        await workflow.send_steer_message("too late")
+
+        assert workflow._pending_followup is None
+        assert workflow._pending_followups == []
+
+    async def test_final_drain_accepts_followup_while_active_dispatch_finishes(self, monkeypatch):
+        workflow = ProcessTaskWorkflow()
+        workflow._context = _build_context(github_integration_id=123)
+        release_initial = asyncio.Event()
+        deliveries: list[str | None] = []
+
+        async def fake_send_followup(*, message, artifact_ids, steer=False):
+            deliveries.append(message)
+            if message == "keep working":
+                await release_initial.wait()
+            return None
+
+        monkeypatch.setattr(workflow, "_send_followup_to_sandbox", fake_send_followup)
+        monkeypatch.setattr(process_task_workflow_module.workflow, "now", Mock(return_value=Mock()))
+        monkeypatch.setattr(process_task_workflow_module.workflow, "patched", Mock(return_value=True))
+        monkeypatch.setattr(process_task_workflow_module.workflow, "deprecate_patch", Mock())
+        monkeypatch.setattr(process_task_workflow_module.workflow, "logger", Mock())
+
+        await workflow.send_followup_message("keep working")
+        assert await workflow._dispatch_next_followup() is True
+        await asyncio.sleep(0)
+
+        finish_task = asyncio.create_task(workflow._finish_active_followup())
+        await asyncio.sleep(0)
+        assert workflow._shutting_down is False
+
+        await workflow.send_followup_message("arrived during drain")
+        release_initial.set()
+        await finish_task
+
+        assert deliveries == ["keep working", "arrived during drain"]
+        assert workflow._pending_followups == []
+        assert workflow._shutting_down is True
+
+    async def test_legacy_history_closes_admission_before_final_dispatch_finishes(self, monkeypatch):
+        workflow = ProcessTaskWorkflow()
+        workflow._context = _build_context(github_integration_id=123)
+        workflow._drain_followups_before_shutdown = False
+        release_initial = asyncio.Event()
+
+        async def fake_send_followup(*, message, artifact_ids, steer=False):
+            await release_initial.wait()
+            return None
+
+        monkeypatch.setattr(workflow, "_send_followup_to_sandbox", fake_send_followup)
+        monkeypatch.setattr(process_task_workflow_module.workflow, "now", Mock(return_value=Mock()))
+        monkeypatch.setattr(process_task_workflow_module.workflow, "deprecate_patch", Mock())
+        monkeypatch.setattr(process_task_workflow_module.workflow, "logger", Mock())
+
+        await workflow.send_followup_message("keep working")
+        assert await workflow._dispatch_next_followup() is True
+        await asyncio.sleep(0)
+
+        finish_task = asyncio.create_task(workflow._finish_active_followup())
+        await asyncio.sleep(0)
+        await workflow.send_followup_message("replay-compatible rejection")
+
+        assert workflow._pending_followups == []
+        release_initial.set()
+        await finish_task
+
+    async def test_completion_waits_for_declined_steer_fallback(self, monkeypatch):
+        workflow = ProcessTaskWorkflow()
+        workflow._context = _build_context(github_integration_id=123)
+        release_steer = asyncio.Event()
+        deliveries: list[tuple[str | None, bool]] = []
+
+        async def fake_send_followup(*, message, artifact_ids, steer=False):
+            deliveries.append((message, steer))
+            if steer:
+                await release_steer.wait()
+                return STEER_DECLINED_OUTCOME
+            return None
+
+        monkeypatch.setattr(workflow, "_send_followup_to_sandbox", fake_send_followup)
+        monkeypatch.setattr(process_task_workflow_module.workflow, "now", Mock(return_value=Mock()))
+        monkeypatch.setattr(process_task_workflow_module.workflow, "patched", Mock(return_value=True))
+        monkeypatch.setattr(process_task_workflow_module.workflow, "deprecate_patch", Mock())
+        monkeypatch.setattr(process_task_workflow_module.workflow, "logger", Mock())
+
+        await workflow.send_steer_message("finish in green")
+        assert await workflow._dispatch_next_followup() is True
+        await asyncio.sleep(0)
+
+        await workflow.complete_task()
+        release_steer.set()
+        await workflow._finish_active_followup()
+
+        assert deliveries == [("finish in green", True), ("finish in green", False)]
+        assert workflow._pending_followup is None
+        assert workflow._pending_followups == []
+
+
 @pytest.mark.django_db
 class TestProcessTaskWorkflowUnit:
     async def test_final_sandbox_cleanup_completes_the_run_stream(self, monkeypatch):
@@ -367,11 +521,13 @@ class TestProcessTaskWorkflowUnit:
         workflow = ProcessTaskWorkflow()
 
         await workflow.send_followup_message("first", ["artifact-1"])
-        await workflow.send_followup_message("second", ["artifact-2"])
+        await workflow.send_steer_message("second", ["artifact-2"])
+        await workflow.send_followup_message("legacy-steer", ["artifact-3"], True)
 
         assert workflow._pending_followups == [
             PendingFollowup(message="first", artifact_ids=["artifact-1"]),
-            PendingFollowup(message="second", artifact_ids=["artifact-2"]),
+            PendingFollowup(message="second", artifact_ids=["artifact-2"], steer=True, sequence=1),
+            PendingFollowup(message="legacy-steer", artifact_ids=["artifact-3"], steer=True, sequence=2),
         ]
         assert workflow._pending_followup is None
         deprecate_patch.assert_called_with(process_task_workflow_module._PATCH_ID_FOLLOWUP_QUEUE)
@@ -391,7 +547,7 @@ class TestProcessTaskWorkflowUnit:
                 "artifact_count": 1,
             },
         )
-        assert logger.info.call_count == 2
+        assert logger.info.call_count == 3
 
     async def test_send_permission_response_can_arrive_before_context_is_loaded(self, monkeypatch):
         logger = Mock()
