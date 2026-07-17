@@ -29,7 +29,9 @@ from products.warehouse_sources.backend.temporal.data_imports.sources.crunchbase
     ENDPOINTS,
     INCREMENTAL_FIELDS,
 )
-from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs import CrunchbaseSourceConfig
+from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs.crunchbase import (
+    CrunchbaseSourceConfig,
+)
 from products.warehouse_sources.backend.types import ExternalDataSourceType
 
 

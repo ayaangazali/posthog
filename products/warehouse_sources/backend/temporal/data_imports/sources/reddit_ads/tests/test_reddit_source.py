@@ -10,7 +10,9 @@ from requests import Response
 from posthog.schema import ReleaseStatus, SourceFieldInputConfig, SourceFieldOauthConfig
 
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.resumable import ResumableSourceManager
-from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs import RedditAdsSourceConfig
+from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs.redditads import (
+    RedditAdsSourceConfig,
+)
 from products.warehouse_sources.backend.temporal.data_imports.sources.reddit_ads.reddit_ads import RedditAdsResumeConfig
 from products.warehouse_sources.backend.temporal.data_imports.sources.reddit_ads.source import RedditAdsSource
 from products.warehouse_sources.backend.types import ExternalDataSourceType

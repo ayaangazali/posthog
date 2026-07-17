@@ -3,7 +3,9 @@ from unittest import mock
 
 from posthog.schema import SourceFieldInputConfig, SourceFieldOauthConfig
 
-from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs import PinterestAdsSourceConfig
+from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs.pinterestads import (
+    PinterestAdsSourceConfig,
+)
 from products.warehouse_sources.backend.temporal.data_imports.sources.pinterest_ads.source import PinterestAdsSource
 from products.warehouse_sources.backend.types import ExternalDataSourceType
 

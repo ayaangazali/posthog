@@ -11,7 +11,9 @@ from django.db import OperationalError
 from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
 
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.resumable import ResumableSourceManager
-from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs import MetaAdsSourceConfig
+from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs.metaads import (
+    MetaAdsSourceConfig,
+)
 from products.warehouse_sources.backend.temporal.data_imports.sources.meta_ads import meta_ads as meta_ads_module
 from products.warehouse_sources.backend.temporal.data_imports.sources.meta_ads.meta_ads import (
     MALFORMED_JSON_MAX_ATTEMPTS,

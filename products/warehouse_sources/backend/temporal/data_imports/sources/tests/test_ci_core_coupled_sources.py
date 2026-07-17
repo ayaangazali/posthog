@@ -58,12 +58,18 @@ def _vendor_from_target(dotted: str) -> str | None:
 
     "sources.postgres.source" / "...data_imports.sources.stripe.constants" -> "postgres" / "stripe";
     "sources" (the bare registry) / "cdc.adapters" / "...naming_convention" -> None.
+
+    generated_configs is a package of per-source modules with per-module contract inputs, so its
+    targets resolve one level deeper: "sources.generated_configs.custom" -> "generated_configs/custom".
     """
     parts = dotted.split(".")
     if "sources" in parts:
         i = parts.index("sources")
         if i + 1 < len(parts):
-            return parts[i + 1]
+            vendor = parts[i + 1]
+            if vendor == "generated_configs" and i + 2 < len(parts):
+                return f"generated_configs/{parts[i + 2]}"
+            return vendor
     return None
 
 
@@ -132,15 +138,33 @@ def _core_consumed_facade_symbols(tree: ast.AST) -> set[str]:
 
 
 def _contract_covered_sources(root: Path) -> set[str]:
+    """Vendors (and generated_configs submodules) the contract-check inputs re-run the suite for.
+
+    A ``generated_configs/<m>.py`` entry covers only that submodule ("generated_configs/<m>");
+    a whole-package entry (``generated_configs/**`` or the pre-split ``generated_configs.py``)
+    covers the bare "generated_configs" root, which _is_covered treats as covering every submodule.
+    """
     turbo = json.loads((root / "products" / "warehouse_sources" / "turbo.json").read_text())
     inputs = turbo["tasks"]["backend:contract-check"]["inputs"]
-    covered = {
-        rest.split("/")[0].removesuffix(".py")
-        for entry in inputs
-        if entry.startswith(_INPUTS_PREFIX) and (rest := entry[len(_INPUTS_PREFIX) :])
-    }
+    covered: set[str] = set()
+    for entry in inputs:
+        if not entry.startswith(_INPUTS_PREFIX):
+            continue
+        rest = entry[len(_INPUTS_PREFIX) :]
+        if not rest:
+            continue
+        segments = rest.split("/")
+        head = segments[0].removesuffix(".py")
+        if head == "generated_configs" and len(segments) > 1 and segments[1] not in ("**", ""):
+            covered.add(f"generated_configs/{segments[1].removesuffix('.py')}")
+        else:
+            covered.add(head)
     assert covered, "parsed no source-vendor inputs from turbo.json backend:contract-check"
     return covered
+
+
+def _is_covered(vendor: str, covered: set[str]) -> bool:
+    return vendor in covered or vendor.split("/")[0] in covered
 
 
 def test_core_facade_coupled_sources_are_covered_by_contract_check():
@@ -167,10 +191,11 @@ def test_core_facade_coupled_sources_are_covered_by_contract_check():
 
     coupled_vendors = {symbol_to_vendor[s] for s in consumed if s in symbol_to_vendor}
     covered = _contract_covered_sources(root)
-    missing = coupled_vendors - covered
+    missing = {v for v in coupled_vendors if not _is_covered(v, covered)}
     assert not missing, (
         f"Core/CorePOE reaches warehouse sources {sorted(missing)} through the facade, but they are "
         f"not covered by products/warehouse_sources/turbo.json backend:contract-check inputs "
         f"{sorted(covered)}. A change to those sources would skip the Core tests that exercise them. "
-        f"Add backend/temporal/data_imports/sources/<vendor>/** to the contract-check inputs."
+        f"Add backend/temporal/data_imports/sources/<vendor>/** (or generated_configs/<module>.py) "
+        f"to the contract-check inputs."
     )

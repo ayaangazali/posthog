@@ -15,7 +15,9 @@ from posthog.models.integration import Integration
 
 from products.warehouse_sources.backend.temporal.data_imports.pipelines.pipeline.typings import SourceInputs
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.resumable import ResumableSourceManager
-from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs import TikTokAdsSourceConfig
+from products.warehouse_sources.backend.temporal.data_imports.sources.generated_configs.tiktokads import (
+    TikTokAdsSourceConfig,
+)
 from products.warehouse_sources.backend.temporal.data_imports.sources.tiktok_ads.source import TikTokAdsSource
 from products.warehouse_sources.backend.temporal.data_imports.sources.tiktok_ads.utils import TikTokAdsPaginator
 from products.warehouse_sources.backend.types import ExternalDataSourceType, IncrementalFieldType
